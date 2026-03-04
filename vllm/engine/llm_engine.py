@@ -1355,6 +1355,7 @@ class LLMEngine:
             try:
                 outputs = self.model_executor.execute_model(
                     execute_model_req=execute_model_req)
+                print("logprobs:",seq_group_metadata_list[0].sampling_params.logprobs)
                 if self._should_enable_tree_decoding(seq_group_metadata_list):
                     outputs, new_branch_groups = self._process_tree_decoding(
                         outputs, seq_group_metadata_list, virtual_engine)
@@ -1467,8 +1468,12 @@ class LLMEngine:
                 continue
                 
             # 获取当前序列组的logprobs
+            print('outputs type:',type(outputs[0]))
+            print(len(outputs))
             if i < len(outputs) and hasattr(outputs[i], 'logprobs'):
                 logprobs = outputs[i].logprobs
+                print(logprobs)
+                print("logprobs type:", type(logprobs))
                 
                 # 判断是否需要创建分支
                 if self.tree_decoder.should_create_branches(

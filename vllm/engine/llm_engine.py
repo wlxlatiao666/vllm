@@ -1357,10 +1357,6 @@ class LLMEngine:
             try:
                 outputs = self.model_executor.execute_model(
                     execute_model_req=execute_model_req)
-                print("output length:", len(outputs))
-                print("seq_group_metadata_list length:", len(seq_group_metadata_list))
-                logprobs = outputs[0].logprobs
-                print("logprobs shape:", logprobs.shape)
                 if self._should_enable_tree_decoding(seq_group_metadata_list):
                     new_branch_groups = self._process_tree_decoding(
                         outputs, seq_group_metadata_list)
@@ -1479,6 +1475,7 @@ class LLMEngine:
                     print("No seq found.")
                     continue
                 original_seq_group = self.seq_id_to_seq_group[request_id]
+                print("group length:", len(original_seq_group.seqs))
                 if self.tree_decoder.should_create_branches(
                     original_seq_group, logprobs[i], sampling_params):
                     # 创建分支序列组

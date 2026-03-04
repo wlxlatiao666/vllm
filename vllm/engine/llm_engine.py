@@ -1357,6 +1357,10 @@ class LLMEngine:
             try:
                 outputs = self.model_executor.execute_model(
                     execute_model_req=execute_model_req)
+                print("output length:", len(outputs))
+                print("seq_group_metadata_list length:", len(seq_group_metadata_list))
+                logprobs = outputs[0].logprobs
+                print("logprobs shape:", logprobs.shape)
                 if self._should_enable_tree_decoding(seq_group_metadata_list):
                     self._process_tree_decoding(
                         outputs, seq_group_metadata_list)
@@ -1466,8 +1470,11 @@ class LLMEngine:
                 continue
                 
             # 获取当前序列组的logprobs
+            print("output length:", len(outputs))
+            print("seq_group_metadata_list length:", len(seq_group_metadata_list))
             if i < len(outputs) and hasattr(outputs[i], 'logprobs'):
                 logprobs = outputs[i].logprobs
+                print("logprobs shape:", logprobs.shape)
                 request_id = seq_group_metadata.request_id
                 if request_id not in self.seq_id_to_seq_group:
                     print("No seq found.")

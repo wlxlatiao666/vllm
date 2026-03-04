@@ -26,6 +26,7 @@ def test_tree_decoding():
     )
     
     sampling_params = SamplingParams(
+        n=3,
         temperature=0.8,
         max_tokens=50,
         logprobs=10,
@@ -55,7 +56,7 @@ def test_tree_decoding():
     # 测试提示词
     test_prompts = [
         "What is the meaning of life?",
-        # "The future of artificial intelligence is",
+        "The future of artificial intelligence is",
         # "In a galaxy far far away",
     ]
     

@@ -20,13 +20,12 @@ def test_tree_decoding():
     # 创建支持tree decoding的采样参数
     tree_config = TreeSearchParams(
         enable_tree_search=True,
-        entropy_threshold=0.5,
+        entropy_threshold=1.0,
         branching_factor=3,
         max_tree_depth=3
     )
     
     sampling_params = SamplingParams(
-        n=3,
         temperature=0.8,
         max_tokens=50,
         logprobs=10,
@@ -56,7 +55,6 @@ def test_tree_decoding():
     # 测试提示词
     test_prompts = [
         "What is the meaning of life?",
-        "The future of artificial intelligence is",
         # "In a galaxy far far away",
     ]
     

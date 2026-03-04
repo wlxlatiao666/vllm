@@ -626,6 +626,8 @@ class LLMEngine:
         ]
         min_cost_scheduler = self.scheduler[costs.index(min(costs))]
         min_cost_scheduler.add_seq_group(seq_group)
+        
+        self.seq_id_to_seq_group[request_id] = seq_group
 
         return seq_group
 
@@ -1464,12 +1466,11 @@ class LLMEngine:
                 continue
                 
             # 获取当前序列组的logprobs
-            print(len(outputs))
-            print(type(outputs[0]))
             if i < len(outputs) and hasattr(outputs[i], 'logprobs'):
                 logprobs = outputs[i].logprobs
                 request_id = seq_group_metadata.request_id
                 if request_id not in self.seq_id_to_seq_group:
+                    print("No seq found.")
                     continue
                 original_seq_group = self.seq_id_to_seq_group[request_id]
                 remove_seqs = []
@@ -1478,6 +1479,7 @@ class LLMEngine:
                     if self.tree_decoder.should_create_branches(
                         original_seq, logprobs[j], sampling_params):
                         # 创建分支序列组
+                        print("branching...")
                         remove_seqs.append(original_seq)
                         new_branch_seqs = self.tree_decoder.create_branch_sequences(
                             original_seq, logprobs[j], sampling_params
@@ -2192,6 +2194,6 @@ class TreeDecoder:
 
         # 更新分支特有属性
         branch_seq.tree_depth = original_seq.tree_depth + 1
-        branch_seq.append_token_id(token_id, logprob=math.log(prob))
+        branch_seq.append_token_id(token_id, logprobs=math.log(prob))
             
         return branch_seq

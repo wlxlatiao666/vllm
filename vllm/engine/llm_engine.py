@@ -625,7 +625,8 @@ class LLMEngine:
         min_cost_scheduler = self.scheduler[costs.index(min(costs))]
         min_cost_scheduler.add_seq_group(seq_group)
 
-        self.seq_id_to_seq_group[request_id] = seq_group
+        if params.tree_search_params.enable_tree_search:
+            self.seq_id_to_seq_group[request_id] = seq_group
 
         return seq_group
 
@@ -1363,8 +1364,8 @@ class LLMEngine:
                     for branch_group in new_branch_groups:
                         self._add_branch_to_scheduler(branch_group, virtual_engine)
                     for branch_group in branch_groups_to_delete:
-                        self._delete_branch_from_scheduler(branch_group, virtual_engine)
-                        # self.abort_request(branch_group.request_id)
+                        # self._delete_branch_from_scheduler(branch_group, virtual_engine)
+                        self.abort_request(branch_group.request_id)
                 self._skip_scheduling_next_step = False
             except InputProcessingError as e:
                 # The input for this request cannot be processed, so we must
@@ -1561,8 +1562,10 @@ class LLMEngine:
     
         original_seq = original_seq_group.seqs[0]
         new_seq = copy.deepcopy(original_seq)
+        new_seq.seq_id = next(self.seq_counter)
         new_seq.status = SequenceStatus.WAITING
-        request_id = f"{original_seq_group.request_id}_branch_{branch_id}"
+        new_seq.append_token_id(token_id, logprobs=logprobs_dict)
+        request_id = f"{original_seq_group.request_id}{branch_id}"
         arrival_time = time.time()
 
         new_seq_group = self._create_sequence_group_with_sampling(

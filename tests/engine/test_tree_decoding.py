@@ -28,7 +28,6 @@ def test_tree_decoding():
     sampling_params = SamplingParams(
         temperature=0.8,
         max_tokens=50,
-        logprobs=10,
         tree_search_params=tree_config
     )
     

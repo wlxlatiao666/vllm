@@ -180,19 +180,20 @@ class RequestOutput:
         if seq_group.request_id in seq_id_to_seq_group:
             group: SequenceGroupBase = seq_id_to_seq_group[
                 seq_group.request_id]
-            assembled_seq_group = group.maybe_assemble_group(seq_group)
-            if finished:
-                group.finish_seq(seq_group)
-            if assembled_seq_group is None:
-                return None
+            if hasattr(group, 'maybe_assemble_group'):
+                assembled_seq_group = group.maybe_assemble_group(seq_group)
+                if finished:
+                    group.finish_seq(seq_group)
+                if assembled_seq_group is None:
+                    return None
 
-            # clear finished seq in seq_id_to_seq_group
-            if len(group.to_be_finished) == 0:
-                for sub_request_id in list(group.seq_id_to_index.keys()):
-                    if sub_request_id in seq_id_to_seq_group:
-                        del seq_id_to_seq_group[sub_request_id]
+                # clear finished seq in seq_id_to_seq_group
+                if len(group.to_be_finished) == 0:
+                    for sub_request_id in list(group.seq_id_to_index.keys()):
+                        if sub_request_id in seq_id_to_seq_group:
+                            del seq_id_to_seq_group[sub_request_id]
 
-            return cls.from_seq_group(assembled_seq_group, use_cache,
+                return cls.from_seq_group(assembled_seq_group, use_cache,
                                       seq_id_to_seq_group)
 
         sampling_params = seq_group.sampling_params

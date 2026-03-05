@@ -1360,6 +1360,8 @@ class LLMEngine:
                 if self._should_enable_tree_decoding(seq_group_metadata_list):
                     new_branch_groups, branch_groups_to_delete = self._process_tree_decoding(
                         outputs, seq_group_metadata_list)
+                    print("len_new:",len(new_branch_groups))
+                    print("len_old:",len(branch_groups_to_delete))
                     for branch_group in new_branch_groups:
                         self._add_branch_to_scheduler(branch_group, virtual_engine)
                     for branch_group in branch_groups_to_delete:
@@ -2209,7 +2211,9 @@ class TreeDecoder:
         """克隆序列组创建分支"""
         # 深度复制原序列组
         new_seq_group = copy.deepcopy(original_seq_group)
-
+        print("old:",len(original_seq_group.seqs))
+        print("new:",len(new_seq_group.seqs))
+        
         # 更新分支特有属性
         new_seq_group.tree_depth = original_seq_group.tree_depth + 1
         new_seq_group.seqs[0].append_token_id(token_id, logprobs=logprobs_dict)

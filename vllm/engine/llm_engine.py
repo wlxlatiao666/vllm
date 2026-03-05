@@ -2198,24 +2198,27 @@ class TreeDecoder:
             probs, num_branches, dim=-1
         )
         branch_seq_groups = []
-        for token_id in top_k_indices:
+        for i, token_id in enumerate(top_k_indices):
             # 创建新的序列组作为分支
             branch_seq_group = self._clone_sequence_for_branch(
-                parent_seq_group, token_id.item(), logprobs_dict
+                parent_seq_group, i, token_id.item(), logprobs_dict
             )
             branch_seq_groups.append(branch_seq_group)
             
         return branch_seq_groups
     
-    def _clone_sequence_for_branch(self, original_seq_group, token_id, logprobs_dict):
+    def _clone_sequence_for_branch(self, original_seq_group, branch_id, token_id, logprobs_dict):
         """克隆序列组创建分支"""
         # 深度复制原序列组
         new_seq_group = copy.deepcopy(original_seq_group)
         print("old:",len(original_seq_group.seqs))
         print("new:",len(new_seq_group.seqs))
-        
+
         # 更新分支特有属性
+        new_seq_group.request_id = f"{original_seq_group.request_id}_branch_{branch_id}"
+        new_seq_group.arrival_time = time.time()
         new_seq_group.tree_depth = original_seq_group.tree_depth + 1
+        new_seq_group.parent_seq_group_id = original_seq_group.request_id
         new_seq_group.seqs[0].append_token_id(token_id, logprobs=logprobs_dict)
             
         return new_seq_group

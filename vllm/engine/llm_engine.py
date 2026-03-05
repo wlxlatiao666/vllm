@@ -1441,7 +1441,7 @@ class LLMEngine:
             # queued control plane messages, such as add/remove lora adapters.
             logger.debug("Stopping remote worker execution loop.")
             self.model_executor.stop_remote_worker_execution_loop()
-        
+
         if self._should_enable_tree_decoding(seq_group_metadata_list):
             new_branch_groups, branch_groups_to_delete = self._process_tree_decoding(
                 outputs, seq_group_metadata_list)
@@ -1483,6 +1483,7 @@ class LLMEngine:
                 original_seq_group = self.seq_id_to_seq_group[request_id]
                 if original_seq_group.is_prefill():
                     continue
+                print("group length:", len(original_seq_group.seqs))
                 if self._should_create_branches(
                     original_seq_group, logprobs[i], sampling_params):
                     # 创建分支序列组
@@ -1568,7 +1569,7 @@ class LLMEngine:
         new_seq.seq_id = next(self.seq_counter)
         new_seq.status = SequenceStatus.WAITING
         # new_seq.append_token_id(token_id, logprobs=logprobs_dict)
-        new_seq.data
+        new_seq.replace_token_id(token_id, logprobs=logprobs_dict)
         request_id = f"{original_seq_group.request_id}{branch_id}"
         arrival_time = time.time()
 

@@ -1363,8 +1363,8 @@ class LLMEngine:
                     for branch_group in new_branch_groups:
                         self._add_branch_to_scheduler(branch_group, virtual_engine)
                     for branch_group in branch_groups_to_delete:
-                        # self._delete_branch_from_scheduler(branch_group, virtual_engine)
-                        self.abort_request(branch_group.request_id)
+                        self._delete_branch_from_scheduler(branch_group, virtual_engine)
+                        # self.abort_request(branch_group.request_id)
                 self._skip_scheduling_next_step = False
             except InputProcessingError as e:
                 # The input for this request cannot be processed, so we must

@@ -347,6 +347,17 @@ class SequenceData(msgspec.Struct,
                  token_embed.to(device=self._cached_all_token_embeds.device)),
                 dim=0)
 
+    def replace_token_id(self, token_id: int, logprobs: dict[int, Logprob]) -> None:
+        old_token_id = self._output_token_ids[-1]
+        self._output_token_ids.pop()
+        self._output_token_ids.append(token_id)
+        self._new_appended_tokens.pop()
+        self._new_appended_tokens.append(token_id)
+        self._cached_all_token_ids.pop()
+        self._cached_all_token_ids.append(token_id)
+        self._cumulative_logprob -= logprobs[old_token_id].logprob
+        self._cumulative_logprob += logprobs[token_id].logprob
+
     def get_len(self) -> int:
         return len(self._output_token_ids) + len(self._prompt_token_ids)
 
@@ -631,6 +642,10 @@ class Sequence:
         self.output_logprobs.append(logprobs)
         self.data.append_token_id(token_id, logprobs[token_id].logprob,
                                   token_embed)
+        
+    def replace_token_id(self, token_id: int, logprobs: dict[int, Logprob],) -> None:
+        assert token_id in logprobs
+        self.data.replace_token_id(token_id, logprobs)
 
     def get_len(self) -> int:
         return self.data.get_len()

@@ -1356,16 +1356,6 @@ class LLMEngine:
             try:
                 outputs = self.model_executor.execute_model(
                     execute_model_req=execute_model_req)
-                if self._should_enable_tree_decoding(seq_group_metadata_list):
-                    new_branch_groups, branch_groups_to_delete = self._process_tree_decoding(
-                        outputs, seq_group_metadata_list)
-                    print("len_new:",len(new_branch_groups))
-                    print("len_old:",len(branch_groups_to_delete))
-                    for branch_group in new_branch_groups:
-                        self._add_branch_to_scheduler(branch_group, virtual_engine)
-                    for branch_group in branch_groups_to_delete:
-                        # self._delete_branch_from_scheduler(branch_group, virtual_engine)
-                        self.abort_request(branch_group.request_id)
                 self._skip_scheduling_next_step = False
             except InputProcessingError as e:
                 # The input for this request cannot be processed, so we must
@@ -1452,6 +1442,17 @@ class LLMEngine:
             logger.debug("Stopping remote worker execution loop.")
             self.model_executor.stop_remote_worker_execution_loop()
 
+        if self._should_enable_tree_decoding(seq_group_metadata_list):
+            new_branch_groups, branch_groups_to_delete = self._process_tree_decoding(
+                outputs, seq_group_metadata_list)
+            print("len_new:",len(new_branch_groups))
+            print("len_old:",len(branch_groups_to_delete))
+            for branch_group in new_branch_groups:
+                self._add_branch_to_scheduler(branch_group, virtual_engine)
+            for branch_group in branch_groups_to_delete:
+                # self._delete_branch_from_scheduler(branch_group, virtual_engine)
+                self.abort_request(branch_group.request_id)
+
         return ctx.request_outputs
 
     def _should_enable_tree_decoding(self, seq_group_metadata_list):
@@ -1480,6 +1481,8 @@ class LLMEngine:
                     print("No seq found.")
                     continue
                 original_seq_group = self.seq_id_to_seq_group[request_id]
+                if original_seq_group.is_prefill():
+                    continue
                 print("group length:", len(original_seq_group.seqs))
                 if self._should_create_branches(
                     original_seq_group, logprobs[i], sampling_params):
@@ -1564,7 +1567,8 @@ class LLMEngine:
         new_seq = copy.deepcopy(original_seq)
         new_seq.seq_id = next(self.seq_counter)
         new_seq.status = SequenceStatus.WAITING
-        new_seq.append_token_id(token_id, logprobs=logprobs_dict)
+        # new_seq.append_token_id(token_id, logprobs=logprobs_dict)
+        new_seq.replace_token_id(token_id, logprobs=logprobs_dict)
         request_id = f"{original_seq_group.request_id}{branch_id}"
         arrival_time = time.time()
 

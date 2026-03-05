@@ -1477,6 +1477,7 @@ class LLMEngine:
                 logprobs = outputs[0].logprobs
                 request_id = seq_group_metadata.request_id
                 if request_id not in self.seq_id_to_seq_group:
+                    print("No seq found.")
                     continue
                 original_seq_group = self.seq_id_to_seq_group[request_id]
                 print("group length:", len(original_seq_group.seqs))
@@ -1563,7 +1564,8 @@ class LLMEngine:
         new_seq = copy.deepcopy(original_seq)
         new_seq.seq_id = next(self.seq_counter)
         new_seq.status = SequenceStatus.WAITING
-        request_id = f"{original_seq_group.request_id}_branch_{branch_id}"
+        new_seq.append_token_id(token_id, logprobs=logprobs_dict)
+        request_id = f"{original_seq_group.request_id}{branch_id}"
         arrival_time = time.time()
 
         new_seq_group = self._create_sequence_group_with_sampling(

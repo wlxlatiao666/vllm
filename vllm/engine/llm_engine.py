@@ -50,7 +50,7 @@ from vllm.sampling_params import RequestOutputKind, SamplingParams
 from vllm.sequence import (ExecuteModelRequest, Logprob, ParallelSampleSequenceGroup,
                            PoolingSequenceGroupOutput, Sequence, SequenceGroup,
                            SequenceGroupBase, SequenceGroupMetadata,
-                           SequenceGroupOutput, SequenceStatus)
+                           SequenceGroupOutput, SequenceStatus, SequenceStage)
 from vllm.tracing import (SpanAttributes, SpanKind, extract_trace_context,
                           init_tracer)
 from vllm.transformers_utils.detokenizer import Detokenizer
@@ -1526,6 +1526,7 @@ class LLMEngine:
         probs = torch.exp(logprobs)
         # Calculate entropy
         entropy = -torch.sum(probs * logprobs, dim=-1)
+        print("entropy:", entropy)
         return entropy.item()
     
     def _create_branch_sequences(self, parent_seq_group, logprobs, sampling_params):
@@ -1570,6 +1571,10 @@ class LLMEngine:
         new_seq.status = SequenceStatus.WAITING
         # new_seq.append_token_id(token_id, logprobs=logprobs_dict)
         new_seq.replace_token_id(token_id, logprobs=logprobs_dict)
+        # new_seq.data._num_computed_tokens = 0
+        # new_seq.data._num_cached_tokens = 0
+        # new_seq.data._stage = SequenceStage.PREFILL
+        new_seq.reset_state_for_recompute()
         request_id = f"{original_seq_group.request_id}{branch_id}"
         arrival_time = time.time()
 

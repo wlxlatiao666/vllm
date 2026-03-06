@@ -22,7 +22,7 @@ def test_tree_decoding():
         enable_tree_search=True,
         entropy_threshold=1.0,
         branching_factor=3,
-        max_tree_depth=3
+        max_tree_depth=2
     )
     
     sampling_params = SamplingParams(
@@ -67,11 +67,12 @@ def test_tree_decoding():
         outputs = llm.generate(prompt, sampling_params)
         
         if outputs and len(outputs) > 0:
-            print(len(outputs))
-            print(len(outputs[0].outputs))
-            generated_text = outputs[0].outputs[0].text
-            print(f"生成结果: {generated_text[:200]}...")
-            print(f"生成长度: {len(generated_text)} 字符")
+            # print(len(outputs))
+            # print(len(outputs[0].outputs))
+            for output in outputs:
+                generated_text = output.outputs[0].text
+                print(f"生成结果: {generated_text}")
+                print(f"生成长度: {len(generated_text)} 字符")
             
             # 检查是否成功生成
             if generated_text and len(generated_text.strip()) > 0:

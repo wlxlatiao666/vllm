@@ -71,7 +71,7 @@ def test_tree_decoding():
             # print(len(outputs[0].outputs))
             for output in outputs:
                 generated_text = output.outputs[0].text
-                print(f"生成结果: {generated_text[:200]}...")
+                print(f"生成结果: {generated_text}")
                 print(f"生成长度: {len(generated_text)} 字符")
             
             # 检查是否成功生成

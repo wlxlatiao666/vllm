@@ -1491,6 +1491,7 @@ class LLMEngine:
                     new_branch_seq_groups = self._create_branch_sequences(
                         original_seq_group, logprobs[i], sampling_params
                     )
+                    # self._skip_scheduling_next_step = True
                     seq_groups.extend(new_branch_seq_groups)
                     seq_groups_to_delete.append(original_seq_group)
 

@@ -358,6 +358,9 @@ class SequenceData(msgspec.Struct,
         self._cumulative_logprob -= logprobs[old_token_id].logprob
         self._cumulative_logprob += logprobs[token_id].logprob
 
+        self._output_embeds = None
+        self._cached_all_token_embeds = None
+
     def get_len(self) -> int:
         return len(self._output_token_ids) + len(self._prompt_token_ids)
 
@@ -411,6 +414,7 @@ class SequenceData(msgspec.Struct,
         the beginning again (e.g., sequence is preempted).
         """
         self._num_computed_tokens = 0
+        self._num_cached_tokens = 0
         self._stage = SequenceStage.PREFILL
         self._new_appended_tokens = []
 

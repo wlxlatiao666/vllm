@@ -1740,9 +1740,11 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         compute_importance = False
         for seq_group_metadata in seq_group_metadata_list:
             tree_params = getattr(seq_group_metadata.sampling_params, 'tree_search_params', None)
-            if tree_params is not None and tree_params.enable_tree_search:
-                compute_importance = True
-                break
+            if tree_params is not None:
+                tau_importance = getattr(tree_params, 'tau_importance', None)
+                if tau_importance is not None:
+                    compute_importance = True
+                    break
                 
         if model_input.attn_metadata is not None:
             model_input.attn_metadata.compute_importance = compute_importance

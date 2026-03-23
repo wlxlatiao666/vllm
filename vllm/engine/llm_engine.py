@@ -1501,7 +1501,7 @@ class LLMEngine:
             return False
             
         tau_importance = sampling_params.tree_search_params.tau_importance
-        if tau_importance and importance_score <= tau_importance:
+        if tau_importance and importance_score and importance_score <= tau_importance:
             return False
             
         return True

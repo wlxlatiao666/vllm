@@ -1736,6 +1736,17 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         """
         model_input = self._prepare_model_input_tensors(
             seq_group_metadata_list, finished_requests_ids)
+
+        compute_importance = False
+        for seq_group_metadata in seq_group_metadata_list:
+            tree_params = getattr(seq_group_metadata.sampling_params, 'tree_search_params', None)
+            if tree_params is not None and tree_params.enable_tree_search:
+                compute_importance = True
+                break
+                
+        if model_input.attn_metadata is not None:
+            model_input.attn_metadata.compute_importance = compute_importance
+
         if get_pp_group().is_last_rank:
             # Sampling metadata is only required for the final pp group
             generators = self.get_generators(finished_requests_ids)
@@ -1913,6 +1924,10 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 logits=logits,
                 sampling_metadata=model_input.sampling_metadata,
             )
+
+            if hasattr(model_input.attn_metadata, 'importance_scores'):
+                if output is not None:
+                    output.importance_scores = model_input.attn_metadata.importance_scores
             if (self.observability_config is not None
                     and self.observability_config.collect_model_forward_time
                     and output is not None):

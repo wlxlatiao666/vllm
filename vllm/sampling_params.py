@@ -120,6 +120,7 @@ class TreeSearchParams:
     entropy_threshold: float = 1.0
     branching_factor: int = 3
     max_tree_depth: int = 3
+    tau_importance: Optional[float] = None
 
 class SamplingParams(
         msgspec.Struct,

@@ -1472,6 +1472,7 @@ class LLMEngine:
         # unfinished_seqs = original_parallel_seq_group.get_unfinished_seqs()
         assert hasattr(outputs[0], 'logprobs')
         logprobs = outputs[0].logprobs
+        importance_scores = getattr(outputs[0], 'importance_scores', None)
 
         for i, seq_group_metadata in enumerate(seq_group_metadata_list):
             request_id = seq_group_metadata.request_id
@@ -1483,19 +1484,27 @@ class LLMEngine:
             num_branches = sampling_params.tree_search_params.branching_factor
             seq_index = original_parallel_seq_group.seq_id_to_index[request_id]
             seq = original_parallel_seq_group.assembled_seq_group.seqs[seq_index]
+            importance_score = importance_scores[i] if importance_scores is not None else None
             if self._should_create_branches(
-                seq, logprobs[i], sampling_params):
+                seq, logprobs[i], sampling_params, importance_score):
                 probs = torch.exp(logprobs[i])
                 _, new_token_ids = torch.topk(probs, num_branches, dim=-1)
                 new_token_ids = new_token_ids.tolist()
                 original_parallel_seq_group.add_tree_branches(request_id, new_token_ids, self)
 
-    def _should_create_branches(self, seq, logprobs, sampling_params):
+    def _should_create_branches(self, seq, logprobs, sampling_params, importance_score=None):
         if seq.tree_depth >= sampling_params.tree_search_params.max_tree_depth:
             return False
         entropy = self._calculate_entropy(logprobs)
-        print("entropy:", entropy)
-        return entropy > sampling_params.tree_search_params.entropy_threshold
+        print(f"entropy: {entropy}, importance: {importance_score}")
+        if entropy <= sampling_params.tree_search_params.entropy_threshold:
+            return False
+            
+        tau_importance = sampling_params.tree_search_params.tau_importance
+        if tau_importance and importance_score <= tau_importance:
+            return False
+            
+        return True
     
     def _calculate_entropy(self, logprobs):
         """Calculate the entropy of the logits."""

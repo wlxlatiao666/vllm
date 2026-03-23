@@ -23,6 +23,61 @@ from vllm.platforms import _Backend, current_platform
 from vllm.utils import direct_register_custom_op
 from vllm.v1.attention.backends.utils import validate_kv_sharing_target
 
+def _compute_importance_score(
+    query: torch.Tensor,
+    key_cache: torch.Tensor,
+    attn_metadata: Any,
+    num_heads: int,
+    num_kv_heads: int,
+    head_size: int,
+    scale: float,
+    alibi_slopes: Optional[torch.Tensor],
+) -> list[float]:
+    num_seqs = query.shape[0]
+    if key_cache.numel() == 0:
+        return [0.0] * num_seqs
+        
+    x = 16 // key_cache.element_size()
+    block_size = key_cache.shape[3]
+    importance_scores = []
+    
+    for i in range(num_seqs):
+        seq_len = int(attn_metadata.seq_lens_tensor[i].item())
+        if seq_len <= 1:
+            importance_scores.append(0.0)
+            continue
+            
+        block_table = attn_metadata.block_tables[i]
+        token_indices = torch.arange(seq_len, device=key_cache.device)
+        block_numbers = block_table[token_indices // block_size].long()
+        block_offsets = (token_indices % block_size).long()
+        
+        # [seq_len, num_kv_heads, head_size // x, x] -> [seq_len, num_kv_heads, head_size]
+        keys = key_cache[block_numbers, :, :, block_offsets, :]
+        keys = keys.reshape(seq_len, num_kv_heads, head_size).to(query.dtype)
+        
+        num_queries_per_kv = num_heads // num_kv_heads
+        if num_queries_per_kv > 1:
+            keys = torch.repeat_interleave(keys, num_queries_per_kv, dim=1)
+            
+        q = query[i].unsqueeze(0) # [1, num_heads, head_size]
+        
+        # attn_weights: [num_heads, 1, seq_len]
+        attn_weights = scale * torch.einsum("qhd,khd->hqk", q, keys).float()
+        
+        if alibi_slopes is not None:
+             position_ids = torch.arange(seq_len, device=key_cache.device).int()
+             alibi_bias = (position_ids - seq_len + 1).float()
+             alibi_bias = alibi_slopes.view(-1, 1, 1) * alibi_bias.view(1, 1, -1)
+             attn_weights = attn_weights + alibi_bias
+             
+        attn_probs = torch.softmax(attn_weights, dim=-1)
+        attn_avg = attn_probs.mean(dim=0).squeeze(0) # [seq_len]
+        
+        importance = float(torch.mean(attn_avg[:-1]).item())
+        importance_scores.append(importance)
+        
+    return importance_scores
 
 class Attention(nn.Module):
     """Attention layer.
@@ -239,6 +294,20 @@ class Attention(nn.Module):
             else:
                 torch.ops.vllm.unified_attention_with_output(
                     query, key, value, output, self.layer_name)
+
+            attn_metadata_ = get_forward_context().attn_metadata
+            if getattr(attn_metadata_, 'compute_importance', False) and getattr(attn_metadata_, 'num_prefills', 0) == 0:
+                forward_context: ForwardContext = get_forward_context()
+                self_kv_cache = self.kv_cache[forward_context.virtual_engine]
+                if len(self_kv_cache) > 0 and self_kv_cache[0].numel() > 0:
+                    scale_val = getattr(self.impl, 'scale', 1.0 / (self.head_size ** 0.5))
+                    alibi_slopes = getattr(self.impl, 'alibi_slopes', None)
+                    attn_metadata_.importance_scores = _compute_importance_score(
+                        query, self_kv_cache[0], attn_metadata_, 
+                        self.num_heads, self.num_kv_heads, self.head_size,
+                        scale_val, alibi_slopes
+                    )
+
             return output.view(-1, hidden_size)
         else:
             if self.use_direct_call:
@@ -247,11 +316,27 @@ class Attention(nn.Module):
                 if isinstance(attn_metadata, dict):
                     attn_metadata = attn_metadata[self.layer_name]
                 self_kv_cache = self.kv_cache[forward_context.virtual_engine]
-                return self.impl.forward(self, query, key, value,
+                result = self.impl.forward(self, query, key, value,
                                          self_kv_cache, attn_metadata)
             else:
-                return torch.ops.vllm.unified_attention(
+                result = torch.ops.vllm.unified_attention(
                     query, key, value, self.layer_name)
+
+            attn_metadata_ = get_forward_context().attn_metadata
+            if getattr(attn_metadata_, 'compute_importance', False) and getattr(attn_metadata_, 'num_prefills', 0) == 0:
+                forward_context_ = get_forward_context()
+                self_kv_cache = self.kv_cache[forward_context_.virtual_engine]
+                if len(self_kv_cache) > 0 and self_kv_cache[0].numel() > 0:
+                    v_query = query.view(-1, self.num_heads, self.head_size)
+                    scale_val = getattr(self.impl, 'scale', 1.0 / (self.head_size ** 0.5))
+                    alibi_slopes = getattr(self.impl, 'alibi_slopes', None)
+                    attn_metadata_.importance_scores = _compute_importance_score(
+                        v_query, self_kv_cache[0], attn_metadata_, 
+                        self.num_heads, self.num_kv_heads, self.head_size,
+                        scale_val, alibi_slopes
+                    )
+
+            return result
 
     def calc_kv_scales(self, query, key, value):
         self._q_scale.copy_(torch.abs(query).max() / self.q_range)

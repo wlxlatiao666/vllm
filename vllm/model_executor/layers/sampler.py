@@ -129,6 +129,9 @@ class SamplerOutput(
     # (used for models like EAGLE).
     prefill_hidden_states: Optional[torch.Tensor] = None
 
+    # Optional attention importance scores calculated during decode.
+    importance_scores: Optional[list[float]] = None
+
     # Time taken in the forward pass for this across all workers
     model_forward_time: Optional[float] = None
 

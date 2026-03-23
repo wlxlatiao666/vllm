@@ -37,7 +37,7 @@ def _compute_importance_score(
     if key_cache.numel() == 0:
         return [0.0] * num_seqs
         
-    block_size = key_cache.shape[2] if key_cache.dim() == 4 else key_cache.shape[3]
+    block_size = key_cache.shape[1] if key_cache.dim() == 4 else key_cache.shape[3]
     importance_scores = []
     
     for i in range(num_seqs):
@@ -67,10 +67,11 @@ def _compute_importance_score(
         if num_queries_per_kv > 1:
             keys = torch.repeat_interleave(keys, num_queries_per_kv, dim=1)
             
-        q = query[i].unsqueeze(0) # [1, num_heads, head_size]
+        q = query[i].unsqueeze(0).float() # [1, num_heads, head_size]
+        keys = keys.float()
         
         # attn_weights: [num_heads, 1, seq_len]
-        attn_weights = scale * torch.einsum("qhd,khd->hqk", q, keys).float()
+        attn_weights = scale * torch.einsum("qhd,khd->hqk", q, keys)
         
         if alibi_slopes is not None:
              position_ids = torch.arange(seq_len, device=key_cache.device).int()
@@ -218,6 +219,21 @@ class Attention(nn.Module):
         self.layer_name = prefix
         self.attn_type = attn_type
 
+        # Determine if this is the last layer to optimize importance score calc
+        self.is_last_layer = True # Default to true for safety
+        try:
+            vllm_config = get_current_vllm_config()
+            hf_config = getattr(vllm_config.model_config, "hf_config", None)
+            if hf_config is not None:
+                num_layers = getattr(hf_config, "num_hidden_layers", getattr(hf_config, "n_layer", 0))
+                if num_layers > 0:
+                    import re
+                    match = re.search(r'\.layers?\.(\d+)', prefix)
+                    if match:
+                        self.is_last_layer = (int(match.group(1)) == num_layers - 1)
+        except Exception:
+            pass
+
         if kv_sharing_target_layer_name is not None:
             if not envs.VLLM_USE_V1:
                 raise NotImplementedError(
@@ -303,7 +319,7 @@ class Attention(nn.Module):
                     query, key, value, output, self.layer_name)
 
             attn_metadata_ = get_forward_context().attn_metadata
-            if getattr(attn_metadata_, 'compute_importance', False) and getattr(attn_metadata_, 'num_prefills', 0) == 0:
+            if getattr(attn_metadata_, 'compute_importance', False) and getattr(attn_metadata_, 'num_prefills', 0) == 0 and getattr(self, 'is_last_layer', True):
                 forward_context: ForwardContext = get_forward_context()
                 self_kv_cache = self.kv_cache[forward_context.virtual_engine]
                 if len(self_kv_cache) > 0 and self_kv_cache[0].numel() > 0:
@@ -330,7 +346,7 @@ class Attention(nn.Module):
                     query, key, value, self.layer_name)
 
             attn_metadata_ = get_forward_context().attn_metadata
-            if getattr(attn_metadata_, 'compute_importance', False) and getattr(attn_metadata_, 'num_prefills', 0) == 0:
+            if getattr(attn_metadata_, 'compute_importance', False) and getattr(attn_metadata_, 'num_prefills', 0) == 0 and getattr(self, 'is_last_layer', True):
                 forward_context_ = get_forward_context()
                 self_kv_cache = self.kv_cache[forward_context_.virtual_engine]
                 if len(self_kv_cache) > 0 and self_kv_cache[0].numel() > 0:

@@ -37,8 +37,7 @@ def _compute_importance_score(
     if key_cache.numel() == 0:
         return [0.0] * num_seqs
         
-    x = 16 // key_cache.element_size()
-    block_size = key_cache.shape[3]
+    block_size = key_cache.shape[2] if key_cache.dim() == 4 else key_cache.shape[3]
     importance_scores = []
     
     for i in range(num_seqs):
@@ -52,9 +51,17 @@ def _compute_importance_score(
         block_numbers = block_table[token_indices // block_size].long()
         block_offsets = (token_indices % block_size).long()
         
-        # [seq_len, num_kv_heads, head_size // x, x] -> [seq_len, num_kv_heads, head_size]
-        keys = key_cache[block_numbers, :, :, block_offsets, :]
-        keys = keys.reshape(seq_len, num_kv_heads, head_size).to(query.dtype)
+        if key_cache.dim() == 4:
+            # FlashAttention layout: [num_blocks, block_size, num_kv_heads, head_size]
+            keys = key_cache[block_numbers, block_offsets, :, :]
+            keys = keys.to(query.dtype)
+        elif key_cache.dim() == 5:
+            # PagedAttention layout: [num_blocks, num_kv_heads, head_size // x, block_size, x]
+            x = 16 // key_cache.element_size()
+            keys = key_cache[block_numbers, :, :, block_offsets, :]
+            keys = keys.reshape(seq_len, num_kv_heads, head_size).to(query.dtype)
+        else:
+            raise ValueError(f"Unsupported key_cache shape: {key_cache.shape}")
         
         num_queries_per_kv = num_heads // num_kv_heads
         if num_queries_per_kv > 1:

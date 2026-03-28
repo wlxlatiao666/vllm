@@ -57,11 +57,12 @@ def test_tree_decoding():
     # 测试提示词
     test_prompts = [
         "What is the meaning of life?",
-        # "In a galaxy far far away",
+        "In a galaxy far far away",
     ]
     
     print(f"\n准备测试 {len(test_prompts)} 个提示词...")
     
+    normal_outputs = llm.generate(test_prompts, sampling_params, use_tqdm=True)
     all_success = True
     for i, prompt in enumerate(test_prompts):
         print(f"\n--- 测试 {i+1}: '{prompt}' ---")

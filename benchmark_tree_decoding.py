@@ -8,9 +8,11 @@ def main():
     parser = argparse.ArgumentParser(description="Benchmark Tree Decoding vs Normal Decoding in vLLM")
     parser.add_argument("--model", type=str, default="/inspire/hdd/global_public/public_models/Qwen/Qwen2.5-7B-Instruct",
                         help="Model to use for benchmarking")
-    parser.add_argument("--num-prompts", type=int, default=10,
+    parser.add_argument("--num-prompts-mc", type=int, default=100,
                         help="Number of prompts to process in batch")
-    parser.add_argument("--max-tokens", type=int, default=128,
+    parser.add_argument("--num-prompts-hs", type=int, default=100,
+                        help="Number of prompts to process in batch")
+    parser.add_argument("--max-tokens", type=int, default=1024,
                         help="Maximum number of tokens to generate per prompt")
     parser.add_argument("--tensor-parallel-size", type=int, default=1,
                         help="Tensor parallel size")
@@ -32,8 +34,10 @@ def main():
         "Describe the architecture of a transformer model.",
         "Write a short story about a time traveler."
     ]
-    prompts = (base_prompts * (args.num_prompts // len(base_prompts) + 1))[:args.num_prompts]
-    print(f"准备了 {len(prompts)} 个 prompt 用于批量测试。")
+    prompts_mc = (base_prompts * (args.num_prompts_mc // len(base_prompts) + 1))[:args.num_prompts_mc]
+    prompts_hs = (base_prompts * (args.num_prompts_hs // len(base_prompts) + 1))[:args.num_prompts_hs]
+    
+    # print(f"准备了 {len(prompts)} 个 prompt 用于批量测试。")
 
     # 2. 初始化 LLM Engine
     print(f"\n正在加载模型 {args.model}...")
@@ -51,6 +55,7 @@ def main():
     normal_params = SamplingParams(
         temperature=0.8,
         max_tokens=args.max_tokens,
+        n=27,
         # tree_search_params=TreeSearchParams(enable_tree_search=False)
     )
     
@@ -59,13 +64,13 @@ def main():
     llm.generate(["Warmup prompt"], normal_params, use_tqdm=False)
     
     start_time = time.time()
-    normal_outputs = llm.generate(prompts, normal_params, use_tqdm=True)
+    normal_outputs = llm.generate(prompts_mc, normal_params, use_tqdm=True)
     normal_time = time.time() - start_time
     
     # 统计普通生成的 tokens
     normal_total_tokens = sum(len(out.outputs[0].token_ids) for out in normal_outputs)
     normal_tps = normal_total_tokens / normal_time
-    normal_qps = len(prompts) / normal_time
+    normal_qps = len(prompts_mc) / normal_time
     
     print(f"\n[Normal Decoding 结果]")
     print(f"总耗时: {normal_time:.2f} 秒")
@@ -92,7 +97,7 @@ def main():
     )
     
     start_time = time.time()
-    tree_outputs = llm.generate(prompts, tree_params, use_tqdm=True)
+    tree_outputs = llm.generate(prompts_hs, tree_params, use_tqdm=True)
     tree_time = time.time() - start_time
     
     # 统计 Tree Decoding 生成的 tokens 和叶子节点数
@@ -107,7 +112,7 @@ def main():
         tree_total_tokens += sum(len(out.token_ids) for out in request_output.outputs)
 
     tree_tps = tree_total_tokens / tree_time
-    tree_qps = len(prompts) / tree_time
+    tree_qps = len(prompts_hs) / tree_time
     
     print(f"\n[Tree Decoding 结果]")
     print(f"总耗时: {tree_time:.2f} 秒")
@@ -120,7 +125,7 @@ def main():
     print("\n" + "="*50)
     print("性能对比总结")
     print("="*50)
-    print(f"批量查询数量: {len(prompts)}")
+    # print(f"批量查询数量: {len(prompts)}")
     print(f"请求最大序列长度: {args.max_tokens}")
     print("-" * 50)
     print(f"{'指标':<25} | {'Normal':<10} | {'Tree Decoding':<15} | {'比变 (Tree/Normal)':<15}")
@@ -128,7 +133,7 @@ def main():
     print(f"{'耗时 (秒)':<25} | {normal_time:<10.2f} | {tree_time:<15.2f} | {tree_time/normal_time:<15.2f}x")
     print(f"{'Queries/s (整体请求吞吐)':<21} | {normal_qps:<10.2f} | {tree_qps:<15.2f} | {tree_qps/normal_qps:<15.2f}x")
     print(f"{'Tokens/s (输出序列吞吐)':<22} | {normal_tps:<10.2f} | {tree_tps:<15.2f} | {tree_tps/normal_tps:<15.2f}x")
-    print(f"{'平均每个Request输出的序列数':<20} | {1:<10.2f} | {total_leaf_nodes/len(prompts):<15.2f} | -")
+    print(f"{'平均每个Request输出的序列数':<20} | {1:<10.2f} | {total_leaf_nodes/len(prompts_hs):<15.2f} | -")
     print("="*50)
 
 if __name__ == "__main__":

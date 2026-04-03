@@ -1499,7 +1499,7 @@ class LLMEngine:
         if seq.tree_depth >= sampling_params.tree_search_params.max_tree_depth:
             return False
         entropy = self._calculate_entropy(logprobs)
-        print(f"entropy: {entropy}, importance: {importance_score}")
+        # print(f"entropy: {entropy}, importance: {importance_score}")
         if entropy <= sampling_params.tree_search_params.entropy_threshold:
             return False
             

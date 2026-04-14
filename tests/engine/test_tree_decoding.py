@@ -9,6 +9,7 @@ Tree decoding是一种通过创建多个分支来探索不同生成路径的技�
 # from transformers import ProcessorMixin
 import torch
 import argparse
+from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 from vllm.sampling_params import TreeSearchParams
 
@@ -38,15 +39,17 @@ def test_tree_decoding():
     print(f"  - 最大树深度: {tree_config.max_tree_depth}")
     
     # 创建LLM实例
+    model_path = "/inspire/hdd/global_public/public_models/Qwen/Qwen2.5-7B-Instruct"
     print("\n正在加载模型...")
     try:
         llm = LLM(
-            model="/inspire/hdd/global_public/public_models/Qwen/Qwen2.5-7B-Instruct",
+            model=model_path,
             dtype="float16",
             tensor_parallel_size=1,
             gpu_memory_utilization=0.8,
             # enable_chunked_prefill=True
         )
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
         print("模型加载成功!")
     except Exception as e:
         print(f"模型加载失败: {e}")
@@ -72,25 +75,36 @@ def test_tree_decoding():
             leaf_outputs = [output for output in outputs[0].outputs if output.is_leaf]
             
             for leaf_out in leaf_outputs:
-                # Traverse up to collect texts
+                # Traverse up to collect texts and ids
                 path_texts = []
+                path_ids = []
                 current = leaf_out
                 while current is not None:
                     path_texts.append(current.tree_text)
+                    path_ids.append(list(current.tree_ids))
                     if current.parent_seq_id is not None and current.parent_seq_id in seq_map:
                         current = seq_map[current.parent_seq_id]
                     else:
                         current = None
-                
+
                 # The path gives leaf to root, so we reverse it
                 full_text = "".join(reversed(path_texts))
+                full_ids = []
+                for ids in reversed(path_ids):
+                    full_ids.extend(ids)
+                decoded_from_ids = tokenizer.decode(full_ids, skip_special_tokens=False)
+
                 print(f"\n--- 序列 ID: {leaf_out.seq_id} | 父节点 ID: {leaf_out.parent_seq_id} | 深度: {leaf_out.tree_depth} (叶子节点) ---")
-                print(f"完整生成结果: {full_text}")
-                print(f"完整生成长度: {len(full_text)} 字符")
+                print(f"tree_text 拼接: {full_text!r}")
+                print(f"tree_ids  解码: {decoded_from_ids!r}")
+                match = full_text == decoded_from_ids
+                print(f"一致性验证: {'✓ 一致' if match else '✗ 不一致'}")
+                if not match:
+                    all_success = False
                 
             # 检查是否成功生成
             if leaf_outputs:
-                print("✓ 成功生成叶子节点!")
+                print("\n✓ 成功生成叶子节点!")
             else:
                 print("✗ 生成失败: 没有找到叶子节点")
                 all_success = False

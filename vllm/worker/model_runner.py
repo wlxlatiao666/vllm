@@ -1702,6 +1702,77 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
     """
     _model_input_cls: Type[ModelInputForGPUWithSamplingMetadata] = (
         ModelInputForGPUWithSamplingMetadata)
+    def _compute_importance_if_needed(self, output, model_input):
+        """Compute importance scores only for sequences where entropy exceeds threshold.
+
+        Uses the cached query from the last decode step, which corresponds to
+        the newly decoded token (the token that was just sampled).
+        """
+        from vllm.forward_context import get_forward_context
+        from vllm.attention.layer import Attention
+
+        attn_metadata = model_input.attn_metadata
+        if getattr(attn_metadata, 'num_prefills', 0) != 0:
+            return None
+
+        sampling_metadata = model_input.sampling_metadata
+        if sampling_metadata is None:
+            return None
+        seq_groups = sampling_metadata.seq_groups
+
+        # Find the last attention layer with a cached query
+        last_attn_layer = None
+        try:
+            forward_context = get_forward_context()
+            for layer in forward_context.no_compile_layers.values():
+                if isinstance(layer, Attention) and getattr(layer, 'is_last_layer', False):
+                    last_attn_layer = layer
+                    break
+        except Exception:
+            return None
+
+        if last_attn_layer is None or last_attn_layer._cached_query is None:
+            return None
+
+        # Check if any tree-decoding sequence needs importance scores
+        has_tree_with_importance = any(
+            getattr(getattr(sg.sampling_params, 'tree_search_params', None),
+                    'tau_importance', None) is not None
+            for sg in seq_groups
+        )
+        if not has_tree_with_importance:
+            return None
+
+        # Compute per-sequence entropy and only compute importance for high-entropy seqs
+        logprobs = output.logprobs
+        if logprobs is None:
+            return None
+
+        importance_scores = [None] * len(seq_groups)
+        any_computed = False
+
+        for i, seq_group in enumerate(seq_groups):
+            tree_params = getattr(seq_group.sampling_params,
+                                  'tree_search_params', None)
+            if tree_params is None:
+                continue
+            tau_importance = getattr(tree_params, 'tau_importance', None)
+            if tau_importance is None:
+                continue
+
+            probs = torch.exp(logprobs[i])
+            entropy = -torch.sum(probs * logprobs[i]).item()
+            if entropy <= tree_params.entropy_threshold:
+                continue
+
+            # Entropy is high — compute importance score for this sequence
+            scores = last_attn_layer.compute_importance_scores(attn_metadata)
+            if scores is not None and i < len(scores):
+                importance_scores[i] = scores[i]
+                any_computed = True
+
+        return importance_scores if any_computed else None
+
     _builder_cls: Type[ModelInputForGPUBuilder] = ModelInputForGPUBuilder
 
     def make_model_input_from_broadcasted_tensor_dict(
@@ -1736,18 +1807,6 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         """
         model_input = self._prepare_model_input_tensors(
             seq_group_metadata_list, finished_requests_ids)
-
-        compute_importance = False
-        for seq_group_metadata in seq_group_metadata_list:
-            tree_params = getattr(seq_group_metadata.sampling_params, 'tree_search_params', None)
-            if tree_params is not None:
-                tau_importance = getattr(tree_params, 'tau_importance', None)
-                if tau_importance is not None:
-                    compute_importance = True
-                    break
-                
-        if model_input.attn_metadata is not None:
-            model_input.attn_metadata.compute_importance = compute_importance
 
         if get_pp_group().is_last_rank:
             # Sampling metadata is only required for the final pp group
@@ -1927,9 +1986,14 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 sampling_metadata=model_input.sampling_metadata,
             )
 
-            if hasattr(model_input.attn_metadata, 'importance_scores'):
-                if output is not None:
-                    output.importance_scores = model_input.attn_metadata.importance_scores
+            # On-demand importance score computation: only when entropy exceeds
+            # threshold for at least one tree-decoding sequence.
+            if output is not None and model_input.attn_metadata is not None:
+                importance_scores = self._compute_importance_if_needed(
+                    output, model_input)
+                if importance_scores is not None:
+                    output.importance_scores = importance_scores
+
             if (self.observability_config is not None
                     and self.observability_config.collect_model_forward_time
                     and output is not None):

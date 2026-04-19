@@ -258,6 +258,9 @@ class Attention(nn.Module):
         self.k_range = torch.tensor(envs.K_SCALE_CONSTANT, dtype=torch.float32)
         self.v_range = torch.tensor(envs.V_SCALE_CONSTANT, dtype=torch.float32)
 
+        # Cache the last decode query for on-demand importance score computation
+        self._cached_query: Optional[torch.Tensor] = None
+
     def forward(
         self,
         query: torch.Tensor,
@@ -318,18 +321,10 @@ class Attention(nn.Module):
                 torch.ops.vllm.unified_attention_with_output(
                     query, key, value, output, self.layer_name)
 
+            # Cache query for on-demand importance score computation (decode only)
             attn_metadata_ = get_forward_context().attn_metadata
-            if getattr(attn_metadata_, 'compute_importance', False) and getattr(attn_metadata_, 'num_prefills', 0) == 0 and getattr(self, 'is_last_layer', True):
-                forward_context: ForwardContext = get_forward_context()
-                self_kv_cache = self.kv_cache[forward_context.virtual_engine]
-                if len(self_kv_cache) > 0 and self_kv_cache[0].numel() > 0:
-                    scale_val = getattr(self.impl, 'scale', 1.0 / (self.head_size ** 0.5))
-                    alibi_slopes = getattr(self.impl, 'alibi_slopes', None)
-                    attn_metadata_.importance_scores = _compute_importance_score(
-                        query, self_kv_cache[0], attn_metadata_, 
-                        self.num_heads, self.num_kv_heads, self.head_size,
-                        scale_val, alibi_slopes
-                    )
+            if getattr(attn_metadata_, 'num_prefills', 0) == 0 and getattr(self, 'is_last_layer', True):
+                self._cached_query = query.detach()
 
             return output.view(-1, hidden_size)
         else:
@@ -345,21 +340,32 @@ class Attention(nn.Module):
                 result = torch.ops.vllm.unified_attention(
                     query, key, value, self.layer_name)
 
+            # Cache query for on-demand importance score computation (decode only)
             attn_metadata_ = get_forward_context().attn_metadata
-            if getattr(attn_metadata_, 'compute_importance', False) and getattr(attn_metadata_, 'num_prefills', 0) == 0 and getattr(self, 'is_last_layer', True):
-                forward_context_ = get_forward_context()
-                self_kv_cache = self.kv_cache[forward_context_.virtual_engine]
-                if len(self_kv_cache) > 0 and self_kv_cache[0].numel() > 0:
-                    v_query = query.view(-1, self.num_heads, self.head_size)
-                    scale_val = getattr(self.impl, 'scale', 1.0 / (self.head_size ** 0.5))
-                    alibi_slopes = getattr(self.impl, 'alibi_slopes', None)
-                    attn_metadata_.importance_scores = _compute_importance_score(
-                        v_query, self_kv_cache[0], attn_metadata_, 
-                        self.num_heads, self.num_kv_heads, self.head_size,
-                        scale_val, alibi_slopes
-                    )
+            if getattr(attn_metadata_, 'num_prefills', 0) == 0 and getattr(self, 'is_last_layer', True):
+                self._cached_query = query.view(-1, self.num_heads, self.head_size).detach()
 
             return result
+
+    def compute_importance_scores(self, attn_metadata) -> Optional[list]:
+        """Compute importance scores using the cached query from the last decode step.
+
+        The cached query corresponds to the token that was just decoded (new token),
+        since it was the input query in the previous forward pass.
+        """
+        if self._cached_query is None:
+            return None
+        forward_context: ForwardContext = get_forward_context()
+        self_kv_cache = self.kv_cache[forward_context.virtual_engine]
+        if len(self_kv_cache) == 0 or self_kv_cache[0].numel() == 0:
+            return None
+        scale_val = getattr(self.impl, 'scale', 1.0 / (self.head_size ** 0.5))
+        alibi_slopes = getattr(self.impl, 'alibi_slopes', None)
+        return _compute_importance_score(
+            self._cached_query, self_kv_cache[0], attn_metadata,
+            self.num_heads, self.num_kv_heads, self.head_size,
+            scale_val, alibi_slopes
+        )
 
     def calc_kv_scales(self, query, key, value):
         self._q_scale.copy_(torch.abs(query).max() / self.q_range)

@@ -1499,14 +1499,13 @@ class LLMEngine:
         if seq.tree_depth >= sampling_params.tree_search_params.max_tree_depth:
             return False
         entropy = self._calculate_entropy(logprobs)
-        # print(f"entropy: {entropy}, importance: {importance_score}")
         if entropy <= sampling_params.tree_search_params.entropy_threshold:
             return False
-            
+
         tau_importance = sampling_params.tree_search_params.tau_importance
-        if tau_importance and importance_score and importance_score <= tau_importance:
+        if tau_importance is not None and importance_score is not None and importance_score <= tau_importance:
             return False
-            
+
         return True
     
     def _calculate_entropy(self, logprobs):

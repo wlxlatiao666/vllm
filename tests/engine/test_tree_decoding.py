@@ -26,6 +26,11 @@ def test_tree_decoding():
         max_tree_depth=2
     )
     
+    normal_params = SamplingParams(
+        n=5,
+        temperature=0.8,
+        max_tokens=50,
+    )
     sampling_params = SamplingParams(
         temperature=0.8,
         max_tokens=50,
@@ -67,7 +72,13 @@ def test_tree_decoding():
     for i, prompt in enumerate(test_prompts):
         print(f"\n--- 测试 {i+1}: '{prompt}' ---")
         
+        print("\n--- 正常生成 (Tree Decoding 禁用) ---")
+        normal_outputs = llm.generate(prompt, normal_params)
+        for output in normal_outputs[0].outputs:
+            normal_text = output.text
+            print(f"结果: {normal_text}")
         # 生成文本
+        print("\n--- Tree Decoding 生成 ---")
         outputs = llm.generate(prompt, sampling_params)
         
         if outputs and len(outputs) > 0:

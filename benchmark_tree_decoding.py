@@ -8,9 +8,9 @@ def main():
     parser = argparse.ArgumentParser(description="Benchmark Tree Decoding vs Normal Decoding in vLLM")
     parser.add_argument("--model", type=str, default="/inspire/hdd/global_public/public_models/Qwen/Qwen2.5-7B-Instruct",
                         help="Model to use for benchmarking")
-    parser.add_argument("--num-prompts-mc", type=int, default=100,
+    parser.add_argument("--num-prompts-mc", type=int, default=270,
                         help="Number of prompts to process in batch")
-    parser.add_argument("--num-prompts-hs", type=int, default=100,
+    parser.add_argument("--num-prompts-hs", type=int, default=10,
                         help="Number of prompts to process in batch")
     parser.add_argument("--max-tokens", type=int, default=1024,
                         help="Maximum number of tokens to generate per prompt")
@@ -18,10 +18,10 @@ def main():
                         help="Tensor parallel size")
     
     # Tree decoding hyperparams
-    parser.add_argument("--entropy-threshold", type=float, default=1.0)
+    parser.add_argument("--entropy-threshold", type=float, default=0.5)
     parser.add_argument("--branching-factor", type=int, default=3)
     parser.add_argument("--max-tree-depth", type=int, default=3)
-    parser.add_argument("--tau-importance", type=float, default=0.05)
+    # parser.add_argument("--tau-importance", type=float, default=0.01)
     
     args = parser.parse_args()
 
@@ -55,7 +55,7 @@ def main():
     normal_params = SamplingParams(
         temperature=0.8,
         max_tokens=args.max_tokens,
-        n=27,
+        # n=27,
         # tree_search_params=TreeSearchParams(enable_tree_search=False)
     )
     
@@ -69,6 +69,11 @@ def main():
     
     # 统计普通生成的 tokens
     normal_total_tokens = sum(len(out.outputs[0].token_ids) for out in normal_outputs)
+    normal_total_tokens = 0
+    for out in normal_outputs:
+        for output in out.outputs:
+            # print(out.outputs[0].token_ids)
+            normal_total_tokens += len(output.token_ids)
     normal_tps = normal_total_tokens / normal_time
     normal_qps = len(prompts_mc) / normal_time
     
@@ -82,7 +87,7 @@ def main():
     print("\n" + "="*50)
     print("开始测试: 启用 Tree Decoding")
     print(f"参数: entropy_threshold={args.entropy_threshold}, branching_factor={args.branching_factor}, "
-          f"max_tree_depth={args.max_tree_depth}, tau_importance={args.tau_importance}")
+          f"max_tree_depth={args.max_tree_depth}")
           
     tree_params = SamplingParams(
         temperature=0.8,
@@ -92,7 +97,7 @@ def main():
             entropy_threshold=args.entropy_threshold,
             branching_factor=args.branching_factor,
             max_tree_depth=args.max_tree_depth,
-            tau_importance=args.tau_importance
+            # tau_importance=args.tau_importance
         )
     )
     
@@ -109,7 +114,7 @@ def main():
         
         # 简单计算：将所有分支生成的token长度加起来
         # 注意: 如果有共享的前缀会被重复计算，这里主要用来衡量输出的丰富度
-        tree_total_tokens += sum(len(out.token_ids) for out in request_output.outputs)
+        tree_total_tokens += sum(len(out.tree_ids) for out in request_output.outputs)
 
     tree_tps = tree_total_tokens / tree_time
     tree_qps = len(prompts_hs) / tree_time

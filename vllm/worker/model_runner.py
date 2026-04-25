@@ -1760,16 +1760,26 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             if tau_importance is None:
                 continue
 
-            probs = torch.exp(logprobs[i])
-            entropy = -torch.sum(probs * logprobs[i]).item()
-            if entropy <= tree_params.entropy_threshold:
+            # Phase B: sequence has pending branch state — compute importance using
+            # t1's cached query (now available as _cached_query at this t2 step).
+            has_pending = getattr(tree_params, 'has_pending_branch', False)
+            if has_pending:
+                scores = last_attn_layer.compute_importance_scores(attn_metadata)
+                if scores is not None and i < len(scores):
+                    importance_scores[i] = scores[i]
+                    any_computed = True
                 continue
 
-            # Entropy is high — compute importance score for this sequence
-            scores = last_attn_layer.compute_importance_scores(attn_metadata)
-            if scores is not None and i < len(scores):
-                importance_scores[i] = scores[i]
-                any_computed = True
+            # probs = torch.exp(logprobs[i])
+            # entropy = -torch.sum(probs * logprobs[i]).item()
+            # if entropy <= tree_params.entropy_threshold:
+            #     continue
+
+            # # Entropy is high — compute importance score for this sequence
+            # scores = last_attn_layer.compute_importance_scores(attn_metadata)
+            # if scores is not None and i < len(scores):
+            #     importance_scores[i] = scores[i]
+            #     any_computed = True
 
         return importance_scores if any_computed else None
 

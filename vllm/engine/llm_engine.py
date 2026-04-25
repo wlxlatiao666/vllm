@@ -1525,25 +1525,43 @@ class LLMEngine:
             seq = current_group.assembled_seq_group.seqs[seq_index]
             
             importance_score = importance_scores[i] if importance_scores is not None else None
-            if self._should_create_branches(
-                seq, logprobs[lp_idx], sampling_params, importance_score):
-                probs = torch.exp(logprobs[lp_idx])
-                _, new_token_ids = torch.topk(probs, num_branches, dim=-1)
-                new_token_ids = new_token_ids.tolist()
-                current_group.add_tree_branches(request_id, new_token_ids, self)
+
+            if seq.pending_branch_logprobs is not None:
+                # Phase B: t2 step — use current importance score (computed with t1's cached query)
+                # to decide whether to branch using the saved t1 logprobs/token_ids.
+                if self._should_create_branches(seq, seq.pending_branch_logprobs, sampling_params, importance_score):
+                    current_group.add_tree_branches(request_id, seq.pending_branch_token_ids, self, deferred=True)
+                else:
+                    seq.pending_branch_logprobs = None
+                    seq.pending_branch_token_ids = None
+                    sampling_params.tree_search_params.has_pending_branch = False
+            elif tsp.tau_importance is not None:
+                # Phase A: tau_importance is set — defer branching to next step so we can
+                # use the current token's query (available as _cached_query at t+1).
+                entropy = self._calculate_entropy(logprobs[lp_idx])
+                if entropy > tsp.entropy_threshold and seq.tree_depth < tsp.max_tree_depth:
+                    probs = torch.exp(logprobs[lp_idx])
+                    _, top_ids = torch.topk(probs, num_branches, dim=-1)
+                    seq.pending_branch_logprobs = logprobs[lp_idx].clone()
+                    seq.pending_branch_token_ids = top_ids.tolist()
+                    sampling_params.tree_search_params.has_pending_branch = True
+            else:
+                # Original path: no tau_importance, branch immediately on high entropy.
+                if self._should_create_branches(seq, logprobs[lp_idx], sampling_params):
+                    probs = torch.exp(logprobs[lp_idx])
+                    _, new_token_ids = torch.topk(probs, num_branches, dim=-1)
+                    new_token_ids = new_token_ids.tolist()
+                    current_group.add_tree_branches(request_id, new_token_ids, self)
 
     def _should_create_branches(self, seq, logprobs, sampling_params, importance_score=None):
         if seq.tree_depth >= sampling_params.tree_search_params.max_tree_depth:
             return False
         entropy = self._calculate_entropy(logprobs)
-        return entropy > sampling_params.tree_search_params.entropy_threshold
         if entropy <= sampling_params.tree_search_params.entropy_threshold:
             return False
-
         tau_importance = sampling_params.tree_search_params.tau_importance
         if tau_importance is not None and importance_score is not None and importance_score <= tau_importance:
             return False
-
         return True
     
     def _calculate_entropy(self, logprobs):

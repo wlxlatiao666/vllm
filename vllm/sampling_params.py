@@ -121,6 +121,7 @@ class TreeSearchParams:
     branching_factor: int = 3
     max_tree_depth: int = 3
     tau_importance: Optional[float] = None
+    has_pending_branch: bool = False
 
 class SamplingParams(
         msgspec.Struct,

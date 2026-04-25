@@ -519,9 +519,14 @@ class Sequence:
         # Token ID that was the last output token before branching
         # (set on the parent sequence by add_tree_branches).
         self.old_branch_token_id: Optional[int] = None
+        # For deferred branching: the t1 high-entropy token (second-to-last before branch).
+        self.old_branch_token_id_extra: Optional[int] = None
         # Number of chars the last detokenized token contributed to output_text.
         # Used to trim the old_branch_token text from tree_text.
         self._last_decoded_token_len: int = 0
+        # Deferred branching: pending state saved at high-entropy step (t1)
+        self.pending_branch_logprobs: Optional["torch.Tensor"] = None
+        self.pending_branch_token_ids: Optional[list] = None
 
     @property
     def n_blocks(self) -> int:
@@ -1558,7 +1563,7 @@ class ParallelSampleSequenceGroup(SequenceGroupBase):
         group.streaming = params.output_kind == RequestOutputKind.DELTA
         group.output_produced = False
 
-    def add_tree_branches(self, parent_req_id: str, new_token_ids: list[int], engine):
+    def add_tree_branches(self, parent_req_id: str, new_token_ids: list[int], engine, deferred: bool = False):
         original_seqs_length = len(self.assembled_seq_group.seqs)
         parent_seq_group = self.to_be_finished[parent_req_id]
         parent_seq = parent_seq_group.seqs[0]
@@ -1566,9 +1571,16 @@ class ParallelSampleSequenceGroup(SequenceGroupBase):
         old_tokens = parent_seq.get_token_ids()
         parent_seq.status = SequenceStatus.FINISHED_STOPPED
         parent_seq.old_branch_token_id = old_tokens[-1]
+        if deferred:
+            parent_seq.old_branch_token_id_extra = old_tokens[-2]
+            new_tokens_base = old_tokens[:-2]
+        else:
+            new_tokens_base = old_tokens[:-1]
+        parent_seq.pending_branch_logprobs = None
+        parent_seq.pending_branch_token_ids = None
         self.finish_seq(parent_seq_group)
         for i, token_id in enumerate(new_token_ids):
-            new_tokens = old_tokens[:-1] + [token_id]
+            new_tokens = new_tokens_base + [token_id]
             processed_inputs = token_inputs(
                 prompt_token_ids=new_tokens,
                 token_type_ids=None,  # 如果有token_type_ids，可以从seq获取

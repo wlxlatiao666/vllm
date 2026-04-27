@@ -194,8 +194,7 @@ class Detokenizer:
         # Track number of chars the most-recent token contributed to output_text.
         # This allows outputs.py to trim a parent's tree_text when the last token
         # became a branch trigger (old_branch_token_id).
-        if seq._last_decoded_token_len is not None:
-            seq._last_decoded_extra_token_len = seq._last_decoded_token_len
+        seq._last_decoded_extra_token_len = seq._last_decoded_token_len
         seq._last_decoded_token_len = len(new_decoded_token_text)  # type: ignore[attr-defined]
 
         return len(new_decoded_token_text)

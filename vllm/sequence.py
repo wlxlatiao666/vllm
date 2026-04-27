@@ -524,8 +524,9 @@ class Sequence:
         # Number of chars the last detokenized token contributed to output_text.
         # Used to trim the old_branch_token text from tree_text.
         self._last_decoded_token_len: int = 0
+        self._last_decoded_extra_token_len: int = 0
         # Deferred branching: pending state saved at high-entropy step (t1)
-        self.pending_branch_logprobs: Optional["torch.Tensor"] = None
+        # self.pending_branch_logprobs: Optional["torch.Tensor"] = None
         self.pending_branch_token_ids: Optional[list] = None
 
     @property
@@ -1576,7 +1577,7 @@ class ParallelSampleSequenceGroup(SequenceGroupBase):
             new_tokens_base = old_tokens[:-2]
         else:
             new_tokens_base = old_tokens[:-1]
-        parent_seq.pending_branch_logprobs = None
+        # parent_seq.pending_branch_logprobs = None
         parent_seq.pending_branch_token_ids = None
         self.finish_seq(parent_seq_group)
         for i, token_id in enumerate(new_token_ids):

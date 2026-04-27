@@ -1535,7 +1535,7 @@ class LLMEngine:
                 else:
                     # seq.pending_branch_logprobs = None
                     seq.pending_branch_token_ids = None
-                    sampling_params.tree_search_params.has_pending_branch = False
+                    current_group.to_be_finished[request_id].sampling_params.tree_search_params.has_pending_branch = False
             elif tsp.tau_importance is not None:
                 # Phase A: tau_importance is set — defer branching to next step so we can
                 # use the current token's query (available as _cached_query at t+1).
@@ -1545,7 +1545,7 @@ class LLMEngine:
                     _, top_ids = torch.topk(probs, num_branches, dim=-1)
                     # seq.pending_branch_logprobs = logprobs[lp_idx].clone()
                     seq.pending_branch_token_ids = top_ids.tolist()
-                    sampling_params.tree_search_params.has_pending_branch = True
+                    current_group.to_be_finished[request_id].sampling_params.tree_search_params.has_pending_branch = True
             else:
                 # Original path: no tau_importance, branch immediately on high entropy.
                 if self._should_create_branches(seq, logprobs[lp_idx], sampling_params):

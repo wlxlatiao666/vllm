@@ -1732,57 +1732,57 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             except Exception:
                 return None
 
-        if last_attn_layer is None or last_attn_layer._cached_query is None:
-            return None
+            if last_attn_layer is None or last_attn_layer._cached_query is None:
+                return None
 
-        # Check if any tree-decoding sequence needs importance scores
-        has_tree_with_importance = any(
-            getattr(getattr(sg.sampling_params, 'tree_search_params', None),
-                    'tau_importance', None) is not None
-            for sg in seq_groups
-        )
-        if not has_tree_with_importance:
-            return None
+            # Check if any tree-decoding sequence needs importance scores
+            has_tree_with_importance = any(
+                getattr(getattr(sg.sampling_params, 'tree_search_params', None),
+                        'tau_importance', None) is not None
+                for sg in seq_groups
+            )
+            if not has_tree_with_importance:
+                return None
 
-        # Compute per-sequence entropy and only compute importance for high-entropy seqs
-        logprobs = output.logprobs
-        if logprobs is None:
-            return None
+            # Compute per-sequence entropy and only compute importance for high-entropy seqs
+            logprobs = output.logprobs
+            if logprobs is None:
+                return None
 
-        importance_scores = [None] * len(seq_groups)
-        any_computed = False
+            importance_scores = [None] * len(seq_groups)
+            any_computed = False
 
-        for i, seq_group in enumerate(seq_groups):
-            tree_params = getattr(seq_group.sampling_params,
-                                  'tree_search_params', None)
-            if tree_params is None:
-                continue
-            tau_importance = getattr(tree_params, 'tau_importance', None)
-            if tau_importance is None:
-                continue
+            for i, seq_group in enumerate(seq_groups):
+                tree_params = getattr(seq_group.sampling_params,
+                                      'tree_search_params', None)
+                if tree_params is None:
+                    continue
+                tau_importance = getattr(tree_params, 'tau_importance', None)
+                if tau_importance is None:
+                    continue
 
-            # Phase B: sequence has pending branch state — compute importance using
-            # t1's cached query (now available as _cached_query at this t2 step).
-            has_pending = getattr(tree_params, 'has_pending_branch', False)
-            if has_pending:
-                scores = last_attn_layer.compute_importance_scores(attn_metadata)
-                if scores is not None and i < len(scores):
-                    importance_scores[i] = scores[i]
-                    any_computed = True
-                continue
+                # Phase B: sequence has pending branch state — compute importance using
+                # t1's cached query (now available as _cached_query at this t2 step).
+                has_pending = getattr(tree_params, 'has_pending_branch', False)
+                if has_pending:
+                    scores = last_attn_layer.compute_importance_scores(attn_metadata)
+                    if scores is not None and i < len(scores):
+                        importance_scores[i] = scores[i]
+                        any_computed = True
+                    continue
 
-            # probs = torch.exp(logprobs[i])
-            # entropy = -torch.sum(probs * logprobs[i]).item()
-            # if entropy <= tree_params.entropy_threshold:
-            #     continue
+                # probs = torch.exp(logprobs[i])
+                # entropy = -torch.sum(probs * logprobs[i]).item()
+                # if entropy <= tree_params.entropy_threshold:
+                #     continue
 
-            # # Entropy is high — compute importance score for this sequence
-            # scores = last_attn_layer.compute_importance_scores(attn_metadata)
-            # if scores is not None and i < len(scores):
-            #     importance_scores[i] = scores[i]
-            #     any_computed = True
+                # # Entropy is high — compute importance score for this sequence
+                # scores = last_attn_layer.compute_importance_scores(attn_metadata)
+                # if scores is not None and i < len(scores):
+                #     importance_scores[i] = scores[i]
+                #     any_computed = True
 
-        return importance_scores if any_computed else None
+            return importance_scores if any_computed else None
 
     _builder_cls: Type[ModelInputForGPUBuilder] = ModelInputForGPUBuilder
 

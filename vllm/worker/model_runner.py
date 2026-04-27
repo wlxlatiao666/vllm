@@ -1762,7 +1762,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
 
             # Phase B: sequence has pending branch state — compute importance using
             # t1's cached query (now available as _cached_query at this t2 step).
-            has_pending = getattr(tree_params, 'has_pending_branch', False)
+            has_pending = getattr(seq_group.seqs[0], 'has_pending_branch', False)
             if has_pending:
                 scores = last_attn_layer.compute_importance_scores(attn_metadata)
                 if scores is not None and i < len(scores):

@@ -21,7 +21,7 @@ def test_tree_decoding():
     # 创建支持tree decoding的采样参数
     tree_config = TreeSearchParams(
         enable_tree_search=True,
-        entropy_threshold=1.0,
+        entropy_threshold=0.5,
         branching_factor=3,
         max_tree_depth=2,
         tau_importance=0.05

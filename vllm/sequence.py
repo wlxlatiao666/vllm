@@ -528,7 +528,6 @@ class Sequence:
         # Deferred branching: pending state saved at high-entropy step (t1)
         # self.pending_branch_logprobs: Optional["torch.Tensor"] = None
         self.pending_branch_token_ids: Optional[list] = None
-        self.has_pending_branch: bool = False
 
     @property
     def n_blocks(self) -> int:

@@ -1702,13 +1702,13 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
     """
     _model_input_cls: Type[ModelInputForGPUWithSamplingMetadata] = (
         ModelInputForGPUWithSamplingMetadata)
-    def _compute_importance_if_needed(self, output, model_input):
+    def _compute_importance_if_needed(self, output, model_input, virtual_engine):
         """Compute importance scores only for sequences where entropy exceeds threshold.
 
         Uses the cached query from the last decode step, which corresponds to
         the newly decoded token (the token that was just sampled).
         """
-        from vllm.forward_context import get_forward_context
+        from vllm.forward_context import get_forward_context, set_forward_context
         from vllm.attention.layer import Attention
 
         attn_metadata = model_input.attn_metadata
@@ -1722,14 +1722,15 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
 
         # Find the last attention layer with a cached query
         last_attn_layer = None
-        try:
-            forward_context = get_forward_context()
-            for layer in forward_context.no_compile_layers.values():
-                if isinstance(layer, Attention) and getattr(layer, 'is_last_layer', False):
-                    last_attn_layer = layer
-                    break
-        except Exception:
-            return None
+        with set_forward_context(attn_metadata, self.vllm_config, virtual_engine):
+            try:
+                forward_context = get_forward_context()
+                for layer in forward_context.no_compile_layers.values():
+                    if isinstance(layer, Attention) and getattr(layer, 'is_last_layer', False):
+                        last_attn_layer = layer
+                        break
+            except Exception:
+                return None
 
         if last_attn_layer is None or last_attn_layer._cached_query is None:
             return None
@@ -2000,7 +2001,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             # threshold for at least one tree-decoding sequence.
             if output is not None and model_input.attn_metadata is not None:
                 importance_scores = self._compute_importance_if_needed(
-                    output, model_input)
+                    output, model_input, virtual_engine)
                 if importance_scores is not None:
                     output.importance_scores = importance_scores
 

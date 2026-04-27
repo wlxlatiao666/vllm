@@ -287,7 +287,7 @@ class RequestOutput:
             #     tree_text = output_text[:-trim] if trim > 0 else output_text
                 old_branch_token_id_extra = getattr(seq, 'old_branch_token_id_extra', None)
                 if old_branch_token_id_extra is not None:
-                    trim = getattr(seq, '_last_decoded_token_len', 0)
+                    trim = getattr(seq, '_last_decoded_token_len', 0) + getattr(seq, '_last_decoded_extra_token_len', 0)
                     tree_text = output_text[:-trim] if trim > 0 else output_text
                 strip_count = 2 if old_branch_token_id_extra is not None else 1
                 if len(tree_ids) >= strip_count:

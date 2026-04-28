@@ -1766,6 +1766,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 has_pending = getattr(tree_params, 'has_pending_branch', False)
                 if has_pending:
                     scores = last_attn_layer.compute_importance_scores(attn_metadata)
+                    print("scores:",scores)
                     if scores is not None and i < len(scores):
                         importance_scores[i] = scores[i]
                         any_computed = True

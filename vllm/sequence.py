@@ -510,7 +510,7 @@ class Sequence:
         self.tree_depth = 0
         self.parent_req_id: Optional[str] = None
         self.parent_seq_id: Optional[int] = None
-        self.is_leaf = True
+        self.is_leaf = None
         # Token ID whose text should be prepended to this sequence's output
         # (set on child sequences created by add_tree_branches).
         self.new_branch_token_id: Optional[int] = None
@@ -1611,6 +1611,7 @@ class ParallelSampleSequenceGroup(SequenceGroupBase):
             child_seq.parent_req_id = parent_req_id
             child_seq.parent_seq_id = parent_seq.seq_id
             child_seq.new_branch_token_id = token_id
+            child_seq.is_leaf = True
             self.assembled_seq_group.seqs.append(child_seq)
 
     def get_unfinished_seqs(self) -> list[Sequence]:

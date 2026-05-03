@@ -51,7 +51,7 @@ class CompletionOutput:
     parent_req_id: Optional[str] = None
     parent_seq_id: Optional[int] = None
     seq_id: Optional[int] = None
-    is_leaf: bool = True
+    is_leaf: bool = None
     tree_text: str = ""
     tree_ids: GenericSequence[int] = ()
 
@@ -328,7 +328,7 @@ class RequestOutput:
                 output.parent_req_id = getattr(seq, 'parent_req_id', None)
                 output.parent_seq_id = getattr(seq, 'parent_seq_id', None)
                 output.seq_id = seq.seq_id
-                output.is_leaf = getattr(seq, 'is_leaf', True)
+                output.is_leaf = getattr(seq, 'is_leaf', None)
                 output.tree_text = tree_text
                 output.tree_ids = tree_ids
 
@@ -345,7 +345,7 @@ class RequestOutput:
                     getattr(seq, 'parent_req_id', None),
                     getattr(seq, 'parent_seq_id', None),
                     seq.seq_id,
-                    getattr(seq, 'is_leaf', True),
+                    getattr(seq, 'is_leaf', None),
                     tree_text=tree_text,
                     tree_ids=tree_ids)
 

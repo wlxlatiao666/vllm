@@ -24,17 +24,17 @@ def test_tree_decoding():
         entropy_threshold=0.5,
         branching_factor=3,
         max_tree_depth=2,
-        # tau_importance=0.05
+        tau_importance=0.001
     )
     
     normal_params = SamplingParams(
         n=5,
         temperature=0.8,
-        max_tokens=50,
+        max_tokens=1024,
     )
     sampling_params = SamplingParams(
         temperature=0.8,
-        max_tokens=50,
+        max_tokens=1024,
         tree_search_params=tree_config
     )
     
@@ -63,8 +63,23 @@ def test_tree_decoding():
         return False
     
     # 测试提示词
+    sys_prompt = 'Please answer the following question. First, provide your reasoning or thought process between <think> and </think> tags. Then, give the final answer between <answer> and </answer> tags. The answer must be a single number, with no units or extra text.\n\nExample:\n<think>First, I analyze the problem step by step... (your reasoning here)</think>\n<answer>(your answer here)</answer>'
+    usr_prompt = 'Janet’s ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers\' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers\' market?'
+    message = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": usr_prompt},
+    ]
+    inputs = tokenizer.apply_chat_template(
+            message,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
+
+    prompt = tokenizer.decode(inputs["input_ids"][0])
     test_prompts = [
-        "What is the meaning of life?",
+        prompt,
         # "In a galaxy far far away",
     ]
     

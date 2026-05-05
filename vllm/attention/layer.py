@@ -82,7 +82,7 @@ def _compute_importance_score(
         attn_probs = torch.softmax(attn_weights, dim=-1)
         attn_avg = attn_probs.mean(dim=0).squeeze(0) # [seq_len]
         
-        importance = float(torch.mean(attn_avg[:-1]).item())
+        importance = float(torch.max(attn_avg[:-1]).item())
         importance_scores.append(importance)
         
     return importance_scores

@@ -1542,7 +1542,10 @@ class ParallelSampleSequenceGroup(SequenceGroupBase):
             assert seq_group is not None
             engine.seq_id_to_seq_group[request_id_i] = group
             group.to_be_finished[request_id_i] = seq_group
-            seqs.append(seq_group.seqs[0])
+            seq = seq_group.seqs[0]
+            if original_params.tree_search_params is not None:
+                seq.is_leaf = True
+            seqs.append(seq)
 
         # for parallel sampling, the `assembled_seq_group` is always
         # available, since we have all the sequences ready, and they

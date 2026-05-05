@@ -32,59 +32,68 @@ def _compute_importance_score(
     head_size: int,
     scale: float,
     alibi_slopes: Optional[torch.Tensor],
+    W: int = 10,
 ) -> list[float]:
     num_seqs = query.shape[0]
     if key_cache.numel() == 0:
         return [0.0] * num_seqs
-        
+
     block_size = key_cache.shape[1] if key_cache.dim() == 4 else key_cache.shape[3]
     importance_scores = []
-    
+
     for i in range(num_seqs):
         seq_len = int(attn_metadata.seq_lens_tensor[i].item())
         if seq_len <= 1:
             importance_scores.append(0.0)
             continue
-            
+
         block_table = attn_metadata.block_tables[i]
         token_indices = torch.arange(seq_len, device=key_cache.device)
         block_numbers = block_table[token_indices // block_size].long()
         block_offsets = (token_indices % block_size).long()
-        
+
         if key_cache.dim() == 4:
-            # FlashAttention layout: [num_blocks, block_size, num_kv_heads, head_size]
             keys = key_cache[block_numbers, block_offsets, :, :]
             keys = keys.to(query.dtype)
         elif key_cache.dim() == 5:
-            # PagedAttention layout: [num_blocks, num_kv_heads, head_size // x, block_size, x]
             x = 16 // key_cache.element_size()
             keys = key_cache[block_numbers, :, :, block_offsets, :]
             keys = keys.reshape(seq_len, num_kv_heads, head_size).to(query.dtype)
         else:
             raise ValueError(f"Unsupported key_cache shape: {key_cache.shape}")
-        
+
         num_queries_per_kv = num_heads // num_kv_heads
         if num_queries_per_kv > 1:
             keys = torch.repeat_interleave(keys, num_queries_per_kv, dim=1)
-            
-        q = query[i].unsqueeze(0).float() # [1, num_heads, head_size]
+
+        q = query[i].unsqueeze(0).float()  # [1, num_heads, head_size]
         keys = keys.float()
-        
+
         # attn_weights: [num_heads, 1, seq_len]
         attn_weights = scale * torch.einsum("qhd,khd->hqk", q, keys)
-        
+
         if alibi_slopes is not None:
-             position_ids = torch.arange(seq_len, device=key_cache.device).int()
-             alibi_bias = (position_ids - seq_len + 1).float()
-             alibi_bias = alibi_slopes.view(-1, 1, 1) * alibi_bias.view(1, 1, -1)
-             attn_weights = attn_weights + alibi_bias
-             
+            position_ids = torch.arange(seq_len, device=key_cache.device).int()
+            alibi_bias = (position_ids - seq_len + 1).float()
+            alibi_bias = alibi_slopes.view(-1, 1, 1) * alibi_bias.view(1, 1, -1)
+            attn_weights = attn_weights + alibi_bias
+
+        # attn_probs: [num_heads, 1, seq_len]
         attn_probs = torch.softmax(attn_weights, dim=-1)
-        attn_avg = attn_probs.mean(dim=0).squeeze(0) # [seq_len]
-        
-        importance = float(torch.max(attn_avg[:-1]).item())
-        importance_scores.append(importance)
-        
+        # average over heads -> [seq_len]
+        attn_avg = attn_probs.mean(dim=0).squeeze(0)
+
+        # WAAD: weighted sum of attention from last token to all past tokens,
+        # weight = min(distance, W)
+        cur_idx = seq_len - 1
+        past_indices = torch.arange(0, cur_idx, device=key_cache.device)
+        deltas = (cur_idx - past_indices).float()
+        weights = torch.clamp(deltas, max=W)
+        attns_to_prev = attn_avg[:cur_idx]
+        waad = float((attns_to_prev * weights).sum().item())
+
+        importance_scores.append(waad)
+
     return importance_scores
 
 class Attention(nn.Module):

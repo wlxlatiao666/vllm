@@ -1455,6 +1455,9 @@ class LLMEngine:
                 # self._delete_branch_from_scheduler(branch_group, virtual_engine)
             #     self.abort_request(branch_group.request_id)
 
+        if outputs and seq_group_metadata_list:
+            self._process_threshold_stats(outputs, seq_group_metadata_list)
+
         return ctx.request_outputs
 
     def _should_enable_tree_decoding(self, seq_group_metadata_list):
@@ -1572,6 +1575,71 @@ class LLMEngine:
         # Calculate entropy
         entropy = -torch.sum(probs * logprobs, dim=-1)
         return entropy.item()
+
+    def _process_threshold_stats(self, outputs, seq_group_metadata_list):
+        """Per-token entropy and importance collection for collect_threshold_stats mode.
+
+        For each decode step, appends the entropy and importance score of the
+        sampled token to seq.entropy_list / seq.importance_list.  No branching
+        is performed — this is a pure observation pass used to calibrate
+        entropy_threshold and tau_importance before enabling tree decoding.
+        """
+        if not outputs:
+            return
+        logprobs = outputs[0].logprobs
+        importance_scores = getattr(outputs[0], 'importance_scores', None)
+        if logprobs is None:
+            return
+
+        # Build mapping: metadata index -> logprobs row index (decode-only rows).
+        logprob_row: dict[int, int] = {}
+        row_idx = 0
+        for i, meta in enumerate(seq_group_metadata_list):
+            if meta.do_sample:
+                logprob_row[i] = row_idx
+                row_idx += 1
+
+        for i, seq_group_metadata in enumerate(seq_group_metadata_list):
+            if seq_group_metadata.is_prompt:
+                continue
+            if i not in logprob_row:
+                continue
+            request_id = seq_group_metadata.request_id
+            lp_idx = logprob_row[i]
+            if lp_idx >= logprobs.shape[0]:
+                break
+
+            # Resolve the Sequence object — handle both direct and assembled groups.
+            if request_id in self.seq_id_to_seq_group:
+                group = self.seq_id_to_seq_group[request_id]
+                sampling_params = group.assembled_seq_group.sampling_params
+                if not sampling_params.collect_threshold_stats:
+                    continue
+                seq_index = group.seq_id_to_index[request_id]
+                seq = group.assembled_seq_group.seqs[seq_index]
+            else:
+                sampling_params = seq_group_metadata.sampling_params
+                if not sampling_params.collect_threshold_stats:
+                    continue
+                # Direct (non-assembled) path: find seq from scheduler.
+                seq = None
+                for sched in self.scheduler:
+                    sg = sched.get_seq_group(request_id)
+                    if sg is not None:
+                        seqs = sg.get_seqs()
+                        if seqs:
+                            seq = seqs[0]
+                        break
+                if seq is None:
+                    continue
+
+            if seq.is_finished():
+                continue
+
+            entropy = self._calculate_entropy(logprobs[lp_idx])
+            importance = importance_scores[i] if importance_scores is not None else None
+            seq.entropy_list.append(entropy)
+            seq.importance_list.append(importance)
 
     # def _add_branch_to_scheduler(self, branch_group, virtual_engine):
     #     """将分支序列组添加到调度器"""

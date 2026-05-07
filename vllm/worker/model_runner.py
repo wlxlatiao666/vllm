@@ -1735,13 +1735,18 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             if last_attn_layer is None or last_attn_layer._cached_query is None:
                 return None
 
-            # Check if any tree-decoding sequence needs importance scores
+            # Check if any tree-decoding sequence needs importance scores,
+            # or if any sequence is in collect_threshold_stats mode.
             has_tree_with_importance = any(
                 getattr(getattr(sg.sampling_params, 'tree_search_params', None),
                         'tau_importance', None) is not None
                 for sg in seq_groups
             )
-            if not has_tree_with_importance:
+            has_stats_collection = any(
+                getattr(sg.sampling_params, 'collect_threshold_stats', False)
+                for sg in seq_groups
+            )
+            if not has_tree_with_importance and not has_stats_collection:
                 return None
 
             # Compute per-sequence entropy and only compute importance for high-entropy seqs
@@ -1753,6 +1758,14 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             any_computed = False
 
             for i, seq_group in enumerate(seq_groups):
+                # collect_threshold_stats: always compute importance for calibration.
+                if getattr(seq_group.sampling_params, 'collect_threshold_stats', False):
+                    scores = last_attn_layer.compute_importance_scores(attn_metadata)
+                    if scores is not None and i < len(scores):
+                        importance_scores[i] = scores[i]
+                        any_computed = True
+                    continue
+
                 tree_params = getattr(seq_group.sampling_params,
                                       'tree_search_params', None)
                 if tree_params is None:
@@ -1989,7 +2002,8 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
 
             # 检查是否有启用tree decoding的请求
             if (model_input.sampling_metadata is not None and 
-                any(seq_group.sampling_params.tree_search_params is not None
+                any(seq_group.sampling_params.tree_search_params is not None or 
+                    seq_group.sampling_params.collect_threshold_stats
                     for seq_group in model_input.sampling_metadata.seq_groups)):
                 self.sampler.include_gpu_probs_tensor = True
 

@@ -4,7 +4,7 @@
 import time
 from collections.abc import MutableSequence
 from collections.abc import Sequence as GenericSequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Generic, Optional, Union
 
 import torch
@@ -54,6 +54,9 @@ class CompletionOutput:
     is_leaf: bool = None
     tree_text: str = ""
     tree_ids: GenericSequence[int] = ()
+    # Per-token stats from collect_threshold_stats mode
+    entropy_list: list[float] = field(default_factory=list)
+    importance_list: list[Optional[float]] = field(default_factory=list)
 
     def finished(self) -> bool:
         return self.finish_reason is not None
@@ -331,6 +334,8 @@ class RequestOutput:
                 output.is_leaf = getattr(seq, 'is_leaf', None)
                 output.tree_text = tree_text
                 output.tree_ids = tree_ids
+                output.entropy_list = list(getattr(seq, 'entropy_list', []))
+                output.importance_list = list(getattr(seq, 'importance_list', []))
 
             else:
                 output = CompletionOutput(
@@ -347,7 +352,9 @@ class RequestOutput:
                     seq.seq_id,
                     getattr(seq, 'is_leaf', None),
                     tree_text=tree_text,
-                    tree_ids=tree_ids)
+                    tree_ids=tree_ids,
+                    entropy_list=list(getattr(seq, 'entropy_list', [])),
+                    importance_list=list(getattr(seq, 'importance_list', [])))
 
             outputs.append(output)
 

@@ -259,6 +259,10 @@ class SamplingParams(
     # params for Tree search
     tree_search_params: Optional[TreeSearchParams] = None
 
+    # Collect per-token entropy and importance (waad) stats without branching.
+    # Used to calibrate entropy_threshold and tau_importance for tree decoding.
+    collect_threshold_stats: bool = False
+
     @staticmethod
     def from_optional(
         n: Optional[int] = 1,

@@ -529,6 +529,10 @@ class Sequence:
         # self.pending_branch_logprobs: Optional["torch.Tensor"] = None
         self.pending_branch_token_ids: Optional[list] = None
 
+        # Per-token stats collected when collect_threshold_stats=True
+        self.entropy_list: list[float] = []
+        self.importance_list: list[Optional[float]] = []
+
     @property
     def n_blocks(self) -> int:
         return (self.get_len() + self.block_size - 1) // self.block_size

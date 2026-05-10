@@ -1621,14 +1621,19 @@ class LLMEngine:
                 sampling_params = seq_group_metadata.sampling_params
                 if not sampling_params.collect_threshold_stats:
                     continue
-                # Direct (non-assembled) path: find seq from scheduler.
+                # Direct (non-assembled) path: find seq from scheduler queues.
                 seq = None
                 for sched in self.scheduler:
-                    sg = sched.get_seq_group(request_id)
-                    if sg is not None:
-                        seqs = sg.get_seqs()
-                        if seqs:
-                            seq = seqs[0]
+                    for queue in (sched.running, sched.waiting, sched.swapped):
+                        for sg in queue:
+                            if sg.request_id == request_id:
+                                seqs = sg.get_seqs()
+                                if seqs:
+                                    seq = seqs[0]
+                                break
+                        if seq is not None:
+                            break
+                    if seq is not None:
                         break
                 if seq is None:
                     continue

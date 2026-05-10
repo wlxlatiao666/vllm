@@ -1600,6 +1600,9 @@ class LLMEngine:
                 row_idx += 1
 
         for i, seq_group_metadata in enumerate(seq_group_metadata_list):
+            sampling_params = seq_group_metadata.sampling_params
+            if not sampling_params.collect_threshold_stats:
+                continue
             if seq_group_metadata.is_prompt:
                 continue
             if i not in logprob_row:
@@ -1618,9 +1621,6 @@ class LLMEngine:
                 seq_index = group.seq_id_to_index[request_id]
                 seq = group.assembled_seq_group.seqs[seq_index]
             else:
-                sampling_params = seq_group_metadata.sampling_params
-                if not sampling_params.collect_threshold_stats:
-                    continue
                 # Direct (non-assembled) path: find seq from scheduler queues.
                 seq = None
                 for sched in self.scheduler:

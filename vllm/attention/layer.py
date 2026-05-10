@@ -71,6 +71,7 @@ def _compute_importance_score(
 
         # attn_weights: [num_heads, 1, seq_len]
         attn_weights = scale * torch.einsum("qhd,khd->hqk", q, keys)
+        # print("attn_weights.shape: ", attn_weights.shape)
 
         if alibi_slopes is not None:
             position_ids = torch.arange(seq_len, device=key_cache.device).int()
@@ -82,7 +83,8 @@ def _compute_importance_score(
         attn_probs = torch.softmax(attn_weights, dim=-1)
         # average over heads -> [seq_len]
         attn_avg = attn_probs.mean(dim=0).squeeze(0)
-
+        attn_sum = attn_avg.sum(dim=-1)
+        # print("attn_sum: ", attn_sum)
         # WAAD: weighted sum of attention from last token to all past tokens,
         # weight = min(distance, W)
         cur_idx = seq_len - 1

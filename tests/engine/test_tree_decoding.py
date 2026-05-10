@@ -24,7 +24,7 @@ def test_tree_decoding():
         entropy_threshold=0.5,
         branching_factor=3,
         max_tree_depth=2,
-        tau_importance=0.2
+        tau_importance=1.0
     )
     
     normal_params = SamplingParams(

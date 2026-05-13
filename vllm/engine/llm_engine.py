@@ -1484,6 +1484,14 @@ class LLMEngine:
         if logprobs is None:
             return
 
+        # Clip logprobs to the tokenizer's valid vocab range so that topk
+        # never selects padding token ids that would fail _validate_model_input.
+        if self.tokenizer is not None:
+            tokenizer = self.tokenizer.get_lora_tokenizer(None)
+            valid_vocab_size = tokenizer.max_token_id + 1
+            if logprobs.shape[-1] > valid_vocab_size:
+                logprobs = logprobs[..., :valid_vocab_size]
+
         # Build mapping: metadata index -> logprobs row index.
         # Only sequences with do_sample=True contribute rows to logprobs
         # (when prompt_logprobs is None, which is the default for tree search).

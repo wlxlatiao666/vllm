@@ -104,10 +104,6 @@ def get_cached_tokenizer(tokenizer: AnyTokenizer) -> AnyTokenizer:
     if hasattr(tokenizer, "vocab_size"):
         with contextlib.suppress(NotImplementedError):
             max_token_id = max(max_token_id, tokenizer.vocab_size)
-    # Some tokenizers (e.g., Qwen2.5) have extra special tokens beyond
-    # vocab_size that appear in prompts but not in get_vocab().
-    if tokenizer_all_special_ids:
-        max_token_id = max(max_token_id, max(tokenizer_all_special_ids))
 
     class CachedTokenizer(tokenizer.__class__):  # type: ignore
 

@@ -1489,8 +1489,12 @@ class LLMEngine:
         if self.tokenizer is not None:
             tokenizer = self.tokenizer.get_lora_tokenizer(None)
             valid_vocab_size = tokenizer.max_token_id + 1
+            print("valid_vocab_size:", valid_vocab_size)
+            print("logprobs.shape:", logprobs.shape)
             if logprobs.shape[-1] > valid_vocab_size:
                 logprobs = logprobs[..., :valid_vocab_size]
+        else:
+            print("self.tokenizer is None!")
 
         # Build mapping: metadata index -> logprobs row index.
         # Only sequences with do_sample=True contribute rows to logprobs
@@ -1556,6 +1560,7 @@ class LLMEngine:
                     _, top_ids = torch.topk(probs, num_branches, dim=-1)
                     # seq.pending_branch_logprobs = logprobs[lp_idx].clone()
                     seq.pending_branch_token_ids = top_ids.tolist()
+                    print("pending_branch_token_ids:", seq.pending_branch_token_ids)
                     current_group.to_be_finished[request_id].sampling_params.tree_search_params.has_pending_branch = True
             else:
                 # Original path: no tau_importance, branch immediately on high entropy.

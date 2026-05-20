@@ -1600,6 +1600,8 @@ class ParallelSampleSequenceGroup(SequenceGroupBase):
             params.n = 1
             params.tree_search_params.enable_tree_search = False
             params.max_tokens = parent_seq_group.sampling_params.max_tokens - parent_seq.get_output_len()
+            if deferred:
+                params.max_tokens += 1
             seq_group = engine._add_processed_request(
                 request_id_i,
                 processed_inputs=processed_inputs,

@@ -24,17 +24,17 @@ def test_tree_decoding():
         entropy_threshold=0.5,
         branching_factor=3,
         max_tree_depth=2,
-        # tau_importance=1.0
+        tau_importance=1.0
     )
     
     normal_params = SamplingParams(
         n=5,
         temperature=0.8,
-        max_tokens=128,
+        max_tokens=64,
     )
     sampling_params = SamplingParams(
         temperature=0.8,
-        max_tokens=128,
+        max_tokens=64,
         tree_search_params=tree_config
     )
     

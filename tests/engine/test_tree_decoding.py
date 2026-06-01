@@ -30,11 +30,11 @@ def test_tree_decoding():
     normal_params = SamplingParams(
         n=5,
         temperature=0.8,
-        max_tokens=1024,
+        max_tokens=64,
     )
     sampling_params = SamplingParams(
         temperature=0.8,
-        max_tokens=1024,
+        max_tokens=64,
         tree_search_params=tree_config
     )
     
@@ -123,6 +123,7 @@ def test_tree_decoding():
                     full_ids.extend(ids)
                 decoded_from_ids = tokenizer.decode(full_ids, skip_special_tokens=False)
 
+                print(f"Response长度: {len(full_ids)}")
                 print(f"\n--- 序列 ID: {leaf_out.seq_id} | 父节点 ID: {leaf_out.parent_seq_id} | 深度: {leaf_out.tree_depth} (叶子节点) ---")
                 print(f"tree_text 拼接: {full_text!r}")
                 print(f"tree_ids  解码: {decoded_from_ids!r}")

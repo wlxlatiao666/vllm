@@ -8,7 +8,7 @@ def main():
     parser = argparse.ArgumentParser(description="Benchmark Tree Decoding vs Normal Decoding in vLLM")
     parser.add_argument("--model", type=str, default="/inspire/hdd/global_public/public_models/Qwen/Qwen2.5-7B-Instruct",
                         help="Model to use for benchmarking")
-    parser.add_argument("--num-prompts-mc", type=int, default=270,
+    parser.add_argument("--num-prompts-mc", type=int, default=10,
                         help="Number of prompts to process in batch")
     parser.add_argument("--num-prompts-hs", type=int, default=10,
                         help="Number of prompts to process in batch")
@@ -18,10 +18,10 @@ def main():
                         help="Tensor parallel size")
     
     # Tree decoding hyperparams
-    parser.add_argument("--entropy-threshold", type=float, default=0.5)
+    parser.add_argument("--entropy-threshold", type=float, default=0.8)
     parser.add_argument("--branching-factor", type=int, default=3)
     parser.add_argument("--max-tree-depth", type=int, default=3)
-    # parser.add_argument("--tau-importance", type=float, default=0.01)
+    parser.add_argument("--tau-importance", type=float, default=7)
     
     args = parser.parse_args()
 
@@ -55,7 +55,7 @@ def main():
     normal_params = SamplingParams(
         temperature=0.8,
         max_tokens=args.max_tokens,
-        # n=27,
+        n=27,
         # tree_search_params=TreeSearchParams(enable_tree_search=False)
     )
     
@@ -97,7 +97,7 @@ def main():
             entropy_threshold=args.entropy_threshold,
             branching_factor=args.branching_factor,
             max_tree_depth=args.max_tree_depth,
-            # tau_importance=args.tau_importance
+            tau_importance=args.tau_importance
         )
     )
     

@@ -1990,6 +1990,11 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         logits = self.model.compute_logits(hidden_or_intermediate_states,
                                            model_input.sampling_metadata)
 
+        # Clip logits to the tokenizer's valid vocab range so that sampling
+        # never produces out-of-vocabulary token ids.
+        if logits is not None and logits.shape[-1] > self.vocab_size:
+            logits = logits[..., :self.vocab_size]
+
         if self.is_driver_worker:
             if model_input.async_callback is not None:
                 model_input.async_callback()

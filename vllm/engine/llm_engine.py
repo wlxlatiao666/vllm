@@ -1474,6 +1474,36 @@ class LLMEngine:
                 if tsp is not None and tsp.enable_tree_search:
                     return True
         return False
+
+    def _get_tree_decoding_max_token_id(
+        self,
+        lora_request: Optional[LoRARequest] = None,
+    ) -> int:
+        """Return the strictest token-id upper bound for tree branches."""
+        max_token_id = self.model_config.get_vocab_size() - 1
+        if self.tokenizer is not None:
+            tokenizer = self.tokenizer.get_lora_tokenizer(lora_request)
+            max_token_id = min(max_token_id, tokenizer.max_token_id)
+        return max_token_id
+
+    def _sanitize_tree_branch_token_ids(
+        self,
+        token_ids: list[int],
+        lora_request: Optional[LoRARequest] = None,
+    ) -> list[int]:
+        max_token_id = self._get_tree_decoding_max_token_id(lora_request)
+        valid_token_ids = [
+            int(token_id) for token_id in token_ids
+            if 0 <= int(token_id) <= max_token_id
+        ]
+        if len(valid_token_ids) != len(token_ids):
+            logger.warning(
+                "Filtered %d out-of-vocabulary tree branch token(s); "
+                "max valid token id is %d.",
+                len(token_ids) - len(valid_token_ids),
+                max_token_id,
+            )
+        return valid_token_ids
     
     def _process_tree_decoding(self, outputs, seq_group_metadata_list):
         """处理tree decoding逻辑"""
@@ -1483,18 +1513,6 @@ class LLMEngine:
         importance_scores = getattr(outputs[0], 'importance_scores', None)
         if logprobs is None:
             return
-
-        # Clip logprobs to the tokenizer's valid vocab range so that topk
-        # never selects padding token ids that would fail _validate_model_input.
-        if self.tokenizer is not None:
-            tokenizer = self.tokenizer.get_lora_tokenizer(None)
-            valid_vocab_size = tokenizer.max_token_id + 1
-            print("valid_vocab_size:", valid_vocab_size)
-            print("logprobs.shape:", logprobs.shape)
-            if logprobs.shape[-1] > valid_vocab_size:
-                logprobs = logprobs[..., :valid_vocab_size]
-        else:
-            print("self.tokenizer is None!")
 
         # Build mapping: metadata index -> logprobs row index.
         # Only sequences with do_sample=True contribute rows to logprobs
@@ -1533,6 +1551,11 @@ class LLMEngine:
             seq = current_group.assembled_seq_group.seqs[seq_index]
             if seq.is_finished():
                 continue
+            row_logprobs = logprobs[lp_idx]
+            valid_vocab_size = self._get_tree_decoding_max_token_id(
+                current_group.assembled_seq_group.lora_request) + 1
+            if row_logprobs.shape[-1] > valid_vocab_size:
+                row_logprobs = row_logprobs[..., :valid_vocab_size]
             num_branches = sampling_params.tree_search_params.branching_factor
             # Lookup the correct group for this specific sequence
             current_group = self.seq_id_to_seq_group[request_id]
@@ -1554,21 +1577,34 @@ class LLMEngine:
             elif tsp.tau_importance is not None:
                 # Phase A: tau_importance is set — defer branching to next step so we can
                 # use the current token's query (available as _cached_query at t+1).
-                entropy = self._calculate_entropy(logprobs[lp_idx])
+                entropy = self._calculate_entropy(row_logprobs)
                 if entropy > tsp.entropy_threshold and seq.tree_depth < tsp.max_tree_depth:
-                    probs = torch.exp(logprobs[lp_idx])
-                    _, top_ids = torch.topk(probs, num_branches, dim=-1)
-                    # seq.pending_branch_logprobs = logprobs[lp_idx].clone()
-                    seq.pending_branch_token_ids = top_ids.tolist()
-                    print("pending_branch_token_ids:", seq.pending_branch_token_ids)
-                    current_group.to_be_finished[request_id].sampling_params.tree_search_params.has_pending_branch = True
+                    top_k = min(num_branches, row_logprobs.shape[-1])
+                    if top_k == 0:
+                        continue
+                    _, top_ids = torch.topk(row_logprobs, top_k, dim=-1)
+                    seq.pending_branch_token_ids = (
+                        self._sanitize_tree_branch_token_ids(
+                            top_ids.tolist(),
+                            current_group.assembled_seq_group.lora_request,
+                        ))
+                    if seq.pending_branch_token_ids:
+                        current_group.to_be_finished[
+                            request_id].sampling_params.tree_search_params.has_pending_branch = True
             else:
                 # Original path: no tau_importance, branch immediately on high entropy.
-                if self._should_create_branches(seq, logprobs[lp_idx], sampling_params):
-                    probs = torch.exp(logprobs[lp_idx])
-                    _, new_token_ids = torch.topk(probs, num_branches, dim=-1)
-                    new_token_ids = new_token_ids.tolist()
-                    current_group.add_tree_branches(request_id, new_token_ids, self)
+                if self._should_create_branches(seq, row_logprobs, sampling_params):
+                    top_k = min(num_branches, row_logprobs.shape[-1])
+                    if top_k == 0:
+                        continue
+                    _, new_token_ids = torch.topk(row_logprobs, top_k, dim=-1)
+                    current_group.add_tree_branches(
+                        request_id,
+                        self._sanitize_tree_branch_token_ids(
+                            new_token_ids.tolist(),
+                            current_group.assembled_seq_group.lora_request,
+                        ),
+                        self)
 
     def _should_create_branches(self, seq, logprobs, sampling_params, importance_score=None):
         if seq.tree_depth >= sampling_params.tree_search_params.max_tree_depth:

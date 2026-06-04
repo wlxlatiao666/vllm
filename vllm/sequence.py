@@ -17,6 +17,7 @@ import torch
 
 from vllm.inputs import SingletonInputs
 from vllm.inputs.data import token_inputs
+from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.multimodal import MultiModalKwargs, MultiModalPlaceholderDict
 from vllm.pooling_params import PoolingParams
@@ -26,6 +27,8 @@ from vllm.sampling_params import RequestOutputKind, SamplingParams
 VLLM_TOKEN_ID_ARRAY_TYPE = "l"
 
 VLLM_INVALID_TOKEN_ID = -1
+
+logger = init_logger(__name__)
 
 
 def array_full(token_id: int, count: int):
@@ -1572,6 +1575,23 @@ class ParallelSampleSequenceGroup(SequenceGroupBase):
         group.output_produced = False
 
     def add_tree_branches(self, parent_req_id: str, new_token_ids: list[int], engine, deferred: bool = False):
+        valid_token_ids = engine._sanitize_tree_branch_token_ids(
+            new_token_ids,
+            self.assembled_seq_group.lora_request,
+        )
+        if not valid_token_ids:
+            logger.warning(
+                "Skipping tree branch creation for request %s because all "
+                "candidate branch token ids are out of vocabulary.",
+                parent_req_id,
+            )
+            parent_seq_group = self.to_be_finished[parent_req_id]
+            parent_seq = parent_seq_group.seqs[0]
+            parent_seq.pending_branch_token_ids = None
+            if parent_seq_group.sampling_params.tree_search_params is not None:
+                parent_seq_group.sampling_params.tree_search_params.has_pending_branch = False
+            return
+
         original_seqs_length = len(self.assembled_seq_group.seqs)
         parent_seq_group = self.to_be_finished[parent_req_id]
         parent_seq = parent_seq_group.seqs[0]
@@ -1587,7 +1607,7 @@ class ParallelSampleSequenceGroup(SequenceGroupBase):
         # parent_seq.pending_branch_logprobs = None
         parent_seq.pending_branch_token_ids = None
         self.finish_seq(parent_seq_group)
-        for i, token_id in enumerate(new_token_ids):
+        for i, token_id in enumerate(valid_token_ids):
             new_tokens = new_tokens_base + [token_id]
             processed_inputs = token_inputs(
                 prompt_token_ids=new_tokens,

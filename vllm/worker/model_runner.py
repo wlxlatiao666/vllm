@@ -51,6 +51,7 @@ from vllm.prompt_adapter.worker_manager import (
     LRUCacheWorkerPromptAdapterManager)
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import IntermediateTensors, SequenceGroupMetadata
+from vllm.transformers_utils.tokenizer import cached_tokenizer_from_config
 from vllm.utils import (DeviceMemoryProfiler, GiB_bytes, PyObjectCache,
                         async_tensor_h2d, flatten_2d_lists,
                         is_pin_memory_available, supports_dynamo,
@@ -1695,6 +1696,33 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
     def vocab_size(self) -> int:
         return self.model_config.get_vocab_size()
 
+    @property
+    def valid_vocab_size(self) -> int:
+        """Number of token ids the *tokenizer* actually knows about.
+
+        The model's lm_head may be padded beyond the tokenizer vocab (e.g.
+        Qwen2.5: model vocab 152064 vs tokenizer max id 151664). Those padded
+        slots are reserved/unused token ids that must never be sampled, or they
+        end up in generated sequences and later fail `_validate_model_input`
+        (especially when re-submitted as a prompt by tree decoding).
+        """
+        cached = getattr(self, "_valid_vocab_size", None)
+        if cached is not None:
+            return cached
+        valid = self.model_config.get_vocab_size()
+        try:
+            tokenizer = cached_tokenizer_from_config(self.model_config)
+            max_token_id = getattr(tokenizer, "max_token_id", None)
+            if max_token_id is not None:
+                valid = min(valid, max_token_id + 1)
+        except Exception as e:
+            logger.warning(
+                "Failed to resolve tokenizer vocab size for logit masking; "
+                "falling back to model vocab size (%d). Exception: %s",
+                valid, e)
+        self._valid_vocab_size = valid
+        return valid
+
 
 class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
     """
@@ -1990,10 +2018,18 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         logits = self.model.compute_logits(hidden_or_intermediate_states,
                                            model_input.sampling_metadata)
 
-        # Clip logits to the tokenizer's valid vocab range so that sampling
-        # never produces out-of-vocabulary token ids.
-        if logits is not None and logits.shape[-1] > self.vocab_size:
-            logits = logits[..., :self.vocab_size]
+        # Mask logits outside the tokenizer's valid vocab range so that
+        # sampling never produces out-of-vocabulary token ids. Note we mask
+        # (set to -inf) rather than slice: slicing would change the logits
+        # width and break downstream code that indexes the full vocab. We use
+        # `valid_vocab_size` (the tokenizer's max id + 1), NOT `self.vocab_size`
+        # (the padded *model* vocab), since the padded slots are exactly the
+        # reserved ids we must avoid.
+        if logits is not None:
+            valid_vocab_size = self.valid_vocab_size
+            if logits.shape[-1] > valid_vocab_size:
+                logits[..., valid_vocab_size:] = float("-inf")
+            print("valid_vocab_size:", self.valid_vocab_size, "model vocab:", self.vocab_size)
 
         if self.is_driver_worker:
             if model_input.async_callback is not None:

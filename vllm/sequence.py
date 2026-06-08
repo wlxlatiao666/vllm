@@ -1607,6 +1607,7 @@ class ParallelSampleSequenceGroup(SequenceGroupBase):
         # parent_seq.pending_branch_logprobs = None
         parent_seq.pending_branch_token_ids = None
         self.finish_seq(parent_seq_group)
+        print("valid_token_ids:", valid_token_ids)
         for i, token_id in enumerate(valid_token_ids):
             new_tokens = new_tokens_base + [token_id]
             processed_inputs = token_inputs(

@@ -2029,7 +2029,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             valid_vocab_size = self.valid_vocab_size
             if logits.shape[-1] > valid_vocab_size:
                 logits[..., valid_vocab_size:] = float("-inf")
-            print("valid_vocab_size:", self.valid_vocab_size, "model vocab:", self.vocab_size)
+            # print("valid_vocab_size:", self.valid_vocab_size, "model vocab:", self.vocab_size)
 
         if self.is_driver_worker:
             if model_input.async_callback is not None:

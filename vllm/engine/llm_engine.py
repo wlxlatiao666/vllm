@@ -1619,10 +1619,13 @@ class LLMEngine:
     
     def _calculate_entropy(self, logprobs):
         """Calculate the entropy of the logits."""
+        # Filter out -inf / nan entries before computing probabilities
+        # to avoid 0.0 * (-inf) -> nan in the entropy formula.
+        finite_logprobs = logprobs[logprobs.isfinite()]
         # Convert logits to probabilities
-        probs = torch.exp(logprobs)
+        probs = torch.exp(finite_logprobs)
         # Calculate entropy
-        entropy = -torch.sum(probs * logprobs, dim=-1)
+        entropy = -torch.sum(probs * finite_logprobs, dim=-1)
         return entropy.item()
 
     def _process_threshold_stats(self, outputs, seq_group_metadata_list):

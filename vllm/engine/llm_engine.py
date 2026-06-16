@@ -1578,7 +1578,9 @@ class LLMEngine:
                 # Phase A: tau_importance is set — defer branching to next step so we can
                 # use the current token's query (available as _cached_query at t+1).
                 entropy = self._calculate_entropy(row_logprobs)
-                if entropy > tsp.entropy_threshold and seq.tree_depth < tsp.max_tree_depth:
+                if (entropy > tsp.entropy_threshold
+                    and seq.tree_depth < tsp.max_tree_depth
+                    and seq.get_output_len() >= tsp.min_seg_length):
                     top_k = min(num_branches, row_logprobs.shape[-1])
                     if top_k == 0:
                         continue
@@ -1608,6 +1610,9 @@ class LLMEngine:
 
     def _should_create_branches(self, seq, logprobs, sampling_params, importance_score=None):
         if seq.tree_depth >= sampling_params.tree_search_params.max_tree_depth:
+            return False
+        min_seg_length = sampling_params.tree_search_params.min_seg_length
+        if seq.get_output_len() < min_seg_length:
             return False
         entropy = self._calculate_entropy(logprobs)
         if entropy <= sampling_params.tree_search_params.entropy_threshold:

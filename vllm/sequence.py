@@ -670,7 +670,9 @@ class Sequence:
         return self.data.get_prompt_len()
 
     def get_output_len(self) -> int:
-        return self.data.get_output_len()
+        if self.new_branch_token_id is None:
+            return self.data.get_output_len()
+        return self.data.get_output_len() + 1
 
     def get_token_ids(self) -> list[int]:
         return self.data.get_token_ids()

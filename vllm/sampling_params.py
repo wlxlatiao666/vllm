@@ -2,9 +2,11 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Sampling parameters for text generation."""
 import copy
+import math
 from dataclasses import dataclass
 from enum import Enum, IntEnum
 from functools import cached_property
+from numbers import Real
 from typing import Annotated, Any, Optional, Union
 
 import msgspec
@@ -123,6 +125,51 @@ class TreeSearchParams:
     tau_importance: Optional[float] = None
     has_pending_branch: bool = False
     min_seg_length: int = 128
+    # None preserves the legacy behaviour: tau_importance=None selects the
+    # immediate entropy path, while a numeric tau selects entropy + WAAD.
+    branch_trigger_mode: Optional[str] = None
+    random_branch_probability: float = 0.2
+    # Maximum number of complete leaf candidates. Internal tree nodes do not
+    # count toward this limit. None keeps the legacy unbounded behaviour.
+    max_num_leaves: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        valid_modes = {"random", "entropy", "entropy_waad"}
+        if (self.branch_trigger_mode is not None
+                and self.branch_trigger_mode not in valid_modes):
+            raise ValueError(
+                "branch_trigger_mode must be one of "
+                f"{sorted(valid_modes)} or None, got "
+                f"{self.branch_trigger_mode!r}.")
+        if (self.branch_trigger_mode == "entropy_waad"
+                and self.tau_importance is None):
+            raise ValueError(
+                "branch_trigger_mode='entropy_waad' requires a numeric "
+                "tau_importance.")
+        if (isinstance(self.random_branch_probability, bool)
+                or not isinstance(self.random_branch_probability, Real)
+                or not math.isfinite(float(self.random_branch_probability))
+                or not 0.0 <= self.random_branch_probability <= 1.0):
+            raise ValueError(
+                "random_branch_probability must be a finite number in "
+                "[0, 1], got "
+                f"{self.random_branch_probability}.")
+        if (self.max_num_leaves is not None
+                and (not isinstance(self.max_num_leaves, int)
+                     or isinstance(self.max_num_leaves, bool)
+                     or self.max_num_leaves < 1)):
+            raise ValueError(
+                "max_num_leaves must be a positive integer or None, got "
+                f"{self.max_num_leaves!r}.")
+
+    def resolved_branch_trigger_mode(self) -> str:
+        """Resolve an explicit trigger mode while preserving old configs."""
+        if self.branch_trigger_mode is not None:
+            return self.branch_trigger_mode
+        if self.tau_importance is not None:
+            return "entropy_waad"
+        return "entropy"
+
 
 class SamplingParams(
         msgspec.Struct,

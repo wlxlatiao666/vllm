@@ -8,8 +8,44 @@ import pytest
 from vllm import SamplingParams
 from vllm.config import ModelConfig
 from vllm.entrypoints.openai.protocol import ChatCompletionRequest
+from vllm.sampling_params import TreeSearchParams
 
 MODEL_NAME = "Qwen/Qwen1.5-7B"
+
+
+def test_tree_search_trigger_mode_backward_compatibility():
+    assert (TreeSearchParams(
+        tau_importance=None).resolved_branch_trigger_mode() == "entropy")
+    assert (TreeSearchParams(
+        tau_importance=0.0).resolved_branch_trigger_mode()
+            == "entropy_waad")
+    assert (TreeSearchParams(
+        tau_importance=1.0,
+        branch_trigger_mode="random",
+    ).resolved_branch_trigger_mode() == "random")
+    assert (TreeSearchParams(
+        tau_importance=1.0,
+        branch_trigger_mode="entropy",
+    ).resolved_branch_trigger_mode() == "entropy")
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"branch_trigger_mode": "unknown"},
+        {"branch_trigger_mode": "entropy_waad"},
+        {"random_branch_probability": -0.1},
+        {"random_branch_probability": 1.1},
+        {"random_branch_probability": "0.2"},
+        {"random_branch_probability": None},
+        {"random_branch_probability": True},
+        {"max_num_leaves": 0},
+        {"max_num_leaves": 1.5},
+    ],
+)
+def test_tree_search_trigger_mode_validation(kwargs):
+    with pytest.raises(ValueError):
+        TreeSearchParams(**kwargs)
 
 
 def test_max_tokens_none():

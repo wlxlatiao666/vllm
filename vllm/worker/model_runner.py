@@ -1766,9 +1766,12 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             # Check if any tree-decoding sequence needs importance scores,
             # or if any sequence is in collect_threshold_stats mode.
             has_tree_with_importance = any(
-                getattr(getattr(sg.sampling_params, 'tree_search_params', None),
-                        'tau_importance', None) is not None
+                tree_params is not None
+                and tree_params.resolved_branch_trigger_mode()
+                == 'entropy_waad'
                 for sg in seq_groups
+                for tree_params in [getattr(
+                    sg.sampling_params, 'tree_search_params', None)]
             )
             has_stats_collection = any(
                 getattr(sg.sampling_params, 'collect_threshold_stats', False)
@@ -1797,6 +1800,9 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 tree_params = getattr(seq_group.sampling_params,
                                       'tree_search_params', None)
                 if tree_params is None:
+                    continue
+                if (tree_params.resolved_branch_trigger_mode()
+                        != 'entropy_waad'):
                     continue
                 tau_importance = getattr(tree_params, 'tau_importance', None)
                 if tau_importance is None:

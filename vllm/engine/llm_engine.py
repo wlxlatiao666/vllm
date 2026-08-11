@@ -1563,20 +1563,37 @@ class LLMEngine:
             seq = current_group.assembled_seq_group.seqs[seq_index]
             
             importance_score = importance_scores[i] if importance_scores is not None else None
+            branch_trigger_mode = tsp.resolved_branch_trigger_mode()
 
             if seq.pending_branch_token_ids is not None:
                 # Phase B: t2 step — use current importance score (computed with t1's cached query)
                 # to decide whether to branch using the saved t1 logprobs/token_ids.
                 tau_importance = sampling_params.tree_search_params.tau_importance
-                if tau_importance is not None and importance_score is not None and importance_score > tau_importance:
-                    current_group.add_tree_branches(request_id, seq.pending_branch_token_ids, self, deferred=True)
+                if (branch_trigger_mode == "entropy_waad"
+                        and tau_importance is not None
+                        and importance_score is not None
+                        and importance_score > tau_importance):
+                    branch_token_ids = self._cap_tree_branch_token_ids(
+                        current_group, seq.pending_branch_token_ids, tsp)
+                    if branch_token_ids:
+                        current_group.add_tree_branches(
+                            request_id,
+                            branch_token_ids,
+                            self,
+                            deferred=True,
+                        )
+                    else:
+                        seq.pending_branch_token_ids = None
+                        current_group.to_be_finished[
+                            request_id].sampling_params.tree_search_params.has_pending_branch = False
                 else:
                     # seq.pending_branch_logprobs = None
                     seq.pending_branch_token_ids = None
                     current_group.to_be_finished[request_id].sampling_params.tree_search_params.has_pending_branch = False
-            elif tsp.tau_importance is not None:
-                # Phase A: tau_importance is set — defer branching to next step so we can
-                # use the current token's query (available as _cached_query at t+1).
+            elif branch_trigger_mode == "entropy_waad":
+                # Phase A: entropy + WAAD defers branching to the next step so
+                # the current token's query is available from the attention
+                # layer cache.
                 entropy = self._calculate_entropy(row_logprobs)
                 if (entropy > tsp.entropy_threshold
                     and seq.tree_depth < tsp.max_tree_depth
@@ -1585,40 +1602,119 @@ class LLMEngine:
                     if top_k == 0:
                         continue
                     _, top_ids = torch.topk(row_logprobs, top_k, dim=-1)
-                    seq.pending_branch_token_ids = (
-                        self._sanitize_tree_branch_token_ids(
-                            top_ids.tolist(),
-                            current_group.assembled_seq_group.lora_request,
-                        ))
-                    if seq.pending_branch_token_ids:
+                    branch_token_ids = self._sanitize_tree_branch_token_ids(
+                        top_ids.tolist(),
+                        current_group.assembled_seq_group.lora_request,
+                    )
+                    branch_token_ids = self._cap_tree_branch_token_ids(
+                        current_group, branch_token_ids, tsp)
+                    if branch_token_ids:
+                        seq.pending_branch_token_ids = branch_token_ids
                         current_group.to_be_finished[
                             request_id].sampling_params.tree_search_params.has_pending_branch = True
+                    else:
+                        seq.pending_branch_token_ids = None
+                        current_group.to_be_finished[
+                            request_id].sampling_params.tree_search_params.has_pending_branch = False
             else:
-                # Original path: no tau_importance, branch immediately on high entropy.
+                # Entropy-only and random-position modes branch immediately.
                 if self._should_create_branches(seq, row_logprobs, sampling_params):
                     top_k = min(num_branches, row_logprobs.shape[-1])
                     if top_k == 0:
                         continue
                     _, new_token_ids = torch.topk(row_logprobs, top_k, dim=-1)
-                    current_group.add_tree_branches(
-                        request_id,
-                        self._sanitize_tree_branch_token_ids(
-                            new_token_ids.tolist(),
-                            current_group.assembled_seq_group.lora_request,
-                        ),
-                        self)
+                    branch_token_ids = self._sanitize_tree_branch_token_ids(
+                        new_token_ids.tolist(),
+                        current_group.assembled_seq_group.lora_request,
+                    )
+                    branch_token_ids = self._cap_tree_branch_token_ids(
+                        current_group, branch_token_ids, tsp)
+                    if branch_token_ids:
+                        current_group.add_tree_branches(
+                            request_id, branch_token_ids, self)
+
+    @staticmethod
+    def _cap_tree_branch_token_ids(current_group, token_ids, tree_params):
+        """Cap a split so the number of complete leaves never exceeds N."""
+        max_num_leaves = tree_params.max_num_leaves
+        if max_num_leaves is None:
+            return token_ids
+
+        current_leaf_count = sum(
+            seq.is_leaf is True
+            for seq in current_group.assembled_seq_group.seqs)
+        # Splitting one existing leaf into C children changes the count by C-1.
+        max_children = max_num_leaves - current_leaf_count + 1
+        if max_children < 2:
+            return []
+        capped = token_ids[:max_children]
+        return capped if len(capped) >= 2 else []
+
+    @staticmethod
+    def _tree_random_path_hash(seq) -> int:
+        """Return a stable rolling hash of the full prompt-to-node path."""
+        mask = (1 << 64) - 1
+        token_ids = seq.get_token_ids()
+        cached_length = getattr(seq, "_tree_random_hash_length", None)
+        if (not isinstance(cached_length, int)
+                or cached_length < 0
+                or cached_length > len(token_ids)):
+            cached_length = 0
+            state = 0xCBF29CE484222325
+        else:
+            state = getattr(seq, "_tree_random_path_hash", 0xCBF29CE484222325)
+
+        for token_id in token_ids[cached_length:]:
+            state ^= int(token_id) & mask
+            state = state * 0x100000001B3 & mask
+
+        seq._tree_random_path_hash = state
+        seq._tree_random_hash_length = len(token_ids)
+        return state
+
+    @classmethod
+    def _tree_random_branch_value(cls, seq, sampling_params) -> float:
+        """Return a reproducible uniform value for this node and decode step.
+
+        Keeping this RNG separate from model sampling means enabling the random
+        trigger does not consume or shift the actor policy's random stream.
+        The rolling full-path hash makes different tree nodes independent of
+        engine-global seq_id while avoiding an O(sequence_length) rehash at
+        every decode step.
+        """
+        mask = (1 << 64) - 1
+        seed = 0 if sampling_params.seed is None else int(sampling_params.seed)
+        state = seed & mask
+        state ^= cls._tree_random_path_hash(seq)
+        state ^= (int(seq.get_output_len()) * 0xBF58476D1CE4E5B9) & mask
+        state ^= (int(seq.tree_depth) * 0x94D049BB133111EB) & mask
+        # SplitMix64 finalizer.
+        state = (state ^ (state >> 30)) * 0xBF58476D1CE4E5B9 & mask
+        state = (state ^ (state >> 27)) * 0x94D049BB133111EB & mask
+        state ^= state >> 31
+        return state / float(1 << 64)
 
     def _should_create_branches(self, seq, logprobs, sampling_params, importance_score=None):
-        if seq.tree_depth >= sampling_params.tree_search_params.max_tree_depth:
+        tree_params = sampling_params.tree_search_params
+        if seq.tree_depth >= tree_params.max_tree_depth:
             return False
-        min_seg_length = sampling_params.tree_search_params.min_seg_length
+        min_seg_length = tree_params.min_seg_length
         if seq.get_output_len() < min_seg_length:
             return False
+
+        branch_trigger_mode = tree_params.resolved_branch_trigger_mode()
+        if branch_trigger_mode == "random":
+            return (self._tree_random_branch_value(seq, sampling_params)
+                    < tree_params.random_branch_probability)
+
         entropy = self._calculate_entropy(logprobs)
-        if entropy <= sampling_params.tree_search_params.entropy_threshold:
+        if entropy <= tree_params.entropy_threshold:
             return False
-        tau_importance = sampling_params.tree_search_params.tau_importance
-        if tau_importance is not None and importance_score is not None and importance_score <= tau_importance:
+        tau_importance = tree_params.tau_importance
+        if (branch_trigger_mode == "entropy_waad"
+                and tau_importance is not None
+                and importance_score is not None
+                and importance_score <= tau_importance):
             return False
         return True
     

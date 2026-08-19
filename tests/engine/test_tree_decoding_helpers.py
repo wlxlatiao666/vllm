@@ -6,7 +6,9 @@
 from types import SimpleNamespace
 
 from vllm.engine.llm_engine import LLMEngine
+from vllm.engine.output_processor.stop_checker import StopChecker
 from vllm.sampling_params import SamplingParams, TreeSearchParams
+from vllm.sequence import Sequence, SequenceStatus
 from vllm.worker.model_runner import ModelRunner
 
 
@@ -21,6 +23,96 @@ class FakeSequence:
 
     def get_output_len(self):
         return self._output_len
+
+    def get_tree_segment_len(self):
+        return self._output_len
+
+
+def _sequence_with_output_len(output_len, *, branch_token_id=None):
+    sequence = object.__new__(Sequence)
+    sequence.data = SimpleNamespace(
+        get_output_len=lambda: output_len,
+        get_last_token_id=lambda: 99,
+        get_len=lambda: output_len + 1,
+    )
+    sequence.new_branch_token_id = branch_token_id
+    sequence.eos_token_id = 2
+    sequence.status = SequenceStatus.RUNNING
+    sequence.output_text = ""
+    return sequence
+
+
+def test_forced_branch_token_does_not_consume_child_output_budget():
+    root = _sequence_with_output_len(7)
+    child = _sequence_with_output_len(7, branch_token_id=123)
+
+    # A forced branch token is already part of the child prompt.  It is
+    # visible in the reconstructed segment, but must not count against the
+    # child's generated-token budget or vLLM's delta-output offsets.
+    assert root.get_output_len() == 7
+    assert root.get_tree_segment_len() == 7
+    assert child.get_output_len() == 7
+    assert child.get_tree_segment_len() == 8
+
+
+def test_stop_checker_counts_only_tokens_generated_by_child():
+    checker = StopChecker(
+        max_model_len=128,
+        get_tokenizer_for_seq=lambda _: None,
+    )
+    params = SamplingParams(max_tokens=8, ignore_eos=True)
+
+    one_slot_left = _sequence_with_output_len(7, branch_token_id=123)
+    checker.maybe_stop_sequence(
+        one_slot_left,
+        new_char_count=0,
+        sampling_params=params,
+    )
+    assert one_slot_left.status == SequenceStatus.RUNNING
+
+    budget_consumed = _sequence_with_output_len(8, branch_token_id=123)
+    checker.maybe_stop_sequence(
+        budget_consumed,
+        new_char_count=0,
+        sampling_params=params,
+    )
+    assert budget_consumed.status == SequenceStatus.FINISHED_LENGTH_CAPPED
+
+
+def test_immediate_tree_budget_is_preserved_across_depths():
+    max_tokens = 32
+    generated_before_each_split = [5, 7, 3]
+    remaining_budget = max_tokens
+    stitched_segment_lengths = []
+
+    for depth, generated in enumerate(generated_before_each_split):
+        sequence = _sequence_with_output_len(
+            generated,
+            branch_token_id=100 + depth if depth else None,
+        )
+        remaining_budget -= sequence.get_output_len()
+        # Immediate branching removes the sampled trigger and replaces it
+        # with the forced child token.  Root has no leading branch token;
+        # every later segment does.
+        stitched_segment_lengths.append(
+            sequence.get_tree_segment_len() - 1)
+
+    # The final child contributes its leading forced token plus every token
+    # left in the generation budget.
+    stitched_segment_lengths.append(1 + remaining_budget)
+    assert sum(stitched_segment_lengths) == max_tokens
+
+
+def test_deferred_tree_budget_keeps_the_existing_extra_slot():
+    max_tokens = 32
+    generated_before_split = 9
+    # Deferred WAAD branching removes t1 and t2 from the parent and replaces
+    # t1 with a forced child token, so the child receives one extra output
+    # slot.  This is independent of the forced-token accounting fixed above.
+    child_budget = max_tokens - generated_before_split + 1
+    stitched_parent_length = generated_before_split - 2
+    stitched_child_length = 1 + child_budget
+    assert stitched_parent_length + stitched_child_length == max_tokens
 
 
 def test_random_trigger_probability_boundaries_skip_entropy():

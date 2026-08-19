@@ -1597,7 +1597,7 @@ class LLMEngine:
                 entropy = self._calculate_entropy(row_logprobs)
                 if (entropy > tsp.entropy_threshold
                     and seq.tree_depth < tsp.max_tree_depth
-                    and seq.get_output_len() >= tsp.min_seg_length):
+                    and seq.get_tree_segment_len() >= tsp.min_seg_length):
                     top_k = min(num_branches, row_logprobs.shape[-1])
                     if top_k == 0:
                         continue
@@ -1699,7 +1699,7 @@ class LLMEngine:
         if seq.tree_depth >= tree_params.max_tree_depth:
             return False
         min_seg_length = tree_params.min_seg_length
-        if seq.get_output_len() < min_seg_length:
+        if seq.get_tree_segment_len() < min_seg_length:
             return False
 
         branch_trigger_mode = tree_params.resolved_branch_trigger_mode()

@@ -6,7 +6,8 @@
 from types import SimpleNamespace
 
 from vllm.engine.llm_engine import LLMEngine
-from vllm.sampling_params import TreeSearchParams
+from vllm.sampling_params import SamplingParams, TreeSearchParams
+from vllm.worker.model_runner import ModelRunner
 
 
 class FakeSequence:
@@ -56,6 +57,39 @@ def test_random_trigger_hashes_full_branch_path():
     assert LLMEngine._tree_random_branch_value(first, params) == first_value
 
 
+def test_entropy_trigger_ignores_waad_score():
+    engine = object.__new__(LLMEngine)
+    sequence = FakeSequence([1, 2, 3, 4])
+    params = SimpleNamespace(
+        seed=0,
+        tree_search_params=TreeSearchParams(
+            enable_tree_search=True,
+            entropy_threshold=1.0,
+            min_seg_length=0,
+            branch_trigger_mode="entropy",
+            # A numeric legacy threshold must not turn an explicitly selected
+            # entropy trigger back into the deferred WAAD path.
+            tau_importance=100.0,
+        ),
+    )
+
+    engine._calculate_entropy = lambda _: 2.0
+    assert engine._should_create_branches(
+        sequence,
+        logprobs=None,
+        sampling_params=params,
+        importance_score=0.0,
+    ) is True
+
+    engine._calculate_entropy = lambda _: 0.5
+    assert engine._should_create_branches(
+        sequence,
+        logprobs=None,
+        sampling_params=params,
+        importance_score=1000.0,
+    ) is False
+
+
 def test_leaf_budget_caps_each_split():
     token_ids = [10, 11, 12, 13]
     tree_params = TreeSearchParams(max_num_leaves=3)
@@ -74,3 +108,50 @@ def test_leaf_budget_caps_each_split():
     legacy_params = TreeSearchParams(max_num_leaves=None)
     assert LLMEngine._cap_tree_branch_token_ids(
         group_with_leaf_count(99), token_ids, legacy_params) == token_ids
+
+
+def test_entropy_stats_skip_attention_importance_path():
+    runner = object.__new__(ModelRunner)
+    params = SamplingParams(
+        collect_threshold_stats=True,
+        collect_importance_stats=False,
+    )
+    model_input = SimpleNamespace(
+        attn_metadata=SimpleNamespace(num_prefills=0),
+        sampling_metadata=SimpleNamespace(
+            seq_groups=[SimpleNamespace(sampling_params=params)],
+        ),
+    )
+
+    # Entropy-only collection must return before accessing runner.vllm_config
+    # or any cached attention query used by WAAD.
+    assert runner._compute_importance_if_needed(
+        output=None,
+        model_input=model_input,
+        virtual_engine=0,
+    ) is None
+
+
+def test_entropy_tree_skip_attention_importance_path():
+    runner = object.__new__(ModelRunner)
+    params = SamplingParams(
+        tree_search_params=TreeSearchParams(
+            enable_tree_search=True,
+            branch_trigger_mode="entropy",
+            tau_importance=None,
+        ),
+    )
+    model_input = SimpleNamespace(
+        attn_metadata=SimpleNamespace(num_prefills=0),
+        sampling_metadata=SimpleNamespace(
+            seq_groups=[SimpleNamespace(sampling_params=params)],
+        ),
+    )
+
+    # The real entropy-only tree request must also return before looking up
+    # runner.vllm_config or an attention layer's cached query.
+    assert runner._compute_importance_if_needed(
+        output=None,
+        model_input=model_input,
+        virtual_engine=0,
+    ) is None

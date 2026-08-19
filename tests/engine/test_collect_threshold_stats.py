@@ -10,7 +10,13 @@ llm = LLM(
     # enable_chunked_prefill=True
 )
 prompt = "What is the meaning of life?"
-params = SamplingParams(n=5, temperature=0.8, max_tokens=200, collect_threshold_stats=True)
+params = SamplingParams(
+    n=5,
+    temperature=0.8,
+    max_tokens=200,
+    collect_threshold_stats=True,
+    collect_importance_stats=True,
+)
 outputs = llm.generate([prompt], params)
 
 for i in range(5):

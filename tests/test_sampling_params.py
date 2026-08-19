@@ -29,6 +29,15 @@ def test_tree_search_trigger_mode_backward_compatibility():
     ).resolved_branch_trigger_mode() == "entropy")
 
 
+def test_importance_stats_can_be_disabled_without_changing_legacy_default():
+    assert (SamplingParams(
+        collect_threshold_stats=True).collect_importance_stats is True)
+    assert SamplingParams(
+        collect_threshold_stats=True,
+        collect_importance_stats=False,
+    ).collect_importance_stats is False
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [

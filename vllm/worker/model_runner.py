@@ -1748,6 +1748,24 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             return None
         seq_groups = sampling_metadata.seq_groups
 
+        # Return before touching attention state when every request is
+        # entropy-only. This keeps both normal tree decoding and entropy
+        # threshold calibration off the WAAD path.
+        has_tree_with_importance = any(
+            tree_params is not None
+            and tree_params.resolved_branch_trigger_mode() == 'entropy_waad'
+            for sg in seq_groups
+            for tree_params in [getattr(
+                sg.sampling_params, 'tree_search_params', None)]
+        )
+        has_importance_stats_collection = any(
+            getattr(sg.sampling_params, 'collect_threshold_stats', False)
+            and getattr(sg.sampling_params, 'collect_importance_stats', False)
+            for sg in seq_groups
+        )
+        if not has_tree_with_importance and not has_importance_stats_collection:
+            return None
+
         # Find the last attention layer with a cached query
         last_attn_layer = None
         with set_forward_context(attn_metadata, self.vllm_config, virtual_engine):
@@ -1763,23 +1781,6 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             if last_attn_layer is None or last_attn_layer._cached_query is None:
                 return None
 
-            # Check if any tree-decoding sequence needs importance scores,
-            # or if any sequence is in collect_threshold_stats mode.
-            has_tree_with_importance = any(
-                tree_params is not None
-                and tree_params.resolved_branch_trigger_mode()
-                == 'entropy_waad'
-                for sg in seq_groups
-                for tree_params in [getattr(
-                    sg.sampling_params, 'tree_search_params', None)]
-            )
-            has_stats_collection = any(
-                getattr(sg.sampling_params, 'collect_threshold_stats', False)
-                for sg in seq_groups
-            )
-            if not has_tree_with_importance and not has_stats_collection:
-                return None
-
             # Compute per-sequence entropy and only compute importance for high-entropy seqs
             logprobs = output.logprobs
             if logprobs is None:
@@ -1789,8 +1790,13 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             any_computed = False
 
             for i, seq_group in enumerate(seq_groups):
-                # collect_threshold_stats: always compute importance for calibration.
-                if getattr(seq_group.sampling_params, 'collect_threshold_stats', False):
+                # Importance collection is opt-in. Entropy-only calibration
+                # already receives full-vocabulary log-probabilities and must
+                # not reconstruct attention weights merely to discard WAAD.
+                if (getattr(seq_group.sampling_params,
+                            'collect_threshold_stats', False)
+                        and getattr(seq_group.sampling_params,
+                                    'collect_importance_stats', False)):
                     scores = last_attn_layer.compute_importance_scores(attn_metadata)
                     if scores is not None and i < len(scores):
                         importance_scores[i] = scores[i]

@@ -124,7 +124,7 @@ class TreeSearchParams:
     max_tree_depth: int = 3
     tau_importance: Optional[float] = None
     has_pending_branch: bool = False
-    min_seg_length: int = 128
+    min_seg_length: int = 10
     # None preserves the legacy behaviour: tau_importance=None selects the
     # immediate entropy path, while a numeric tau selects entropy + WAAD.
     branch_trigger_mode: Optional[str] = None

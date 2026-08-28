@@ -132,6 +132,19 @@ class TreeSearchParams:
     # Maximum number of complete leaf candidates. Internal tree nodes do not
     # count toward this limit. None keeps the legacy unbounded behaviour.
     max_num_leaves: Optional[int] = None
+    # How the branch-continuation tokens are chosen at a branch point (B2).
+    #   "sample" — sample `branching_factor` DISTINCT tokens without
+    #              replacement from softmax(logprobs / branch_temperature) via
+    #              Gumbel-top-k. Yields diverse, on-policy siblings; this is the
+    #              recommended setting for RL rollouts (sibling contrast is what
+    #              the segment-level advantage feeds on).
+    #   "topk"   — legacy deterministic top-k by logprob (near-duplicate
+    #              siblings; kept for ablation).
+    branch_sampling: str = "sample"
+    # Temperature applied to the branch-point distribution before sampling.
+    # 1.0 samples exactly from the model's next-token distribution; >1.0
+    # increases sibling diversity. Only used when branch_sampling="sample".
+    branch_temperature: float = 1.0
 
     def __post_init__(self) -> None:
         valid_modes = {"random", "entropy", "entropy_waad"}
@@ -161,6 +174,18 @@ class TreeSearchParams:
             raise ValueError(
                 "max_num_leaves must be a positive integer or None, got "
                 f"{self.max_num_leaves!r}.")
+        valid_sampling = {"sample", "topk"}
+        if self.branch_sampling not in valid_sampling:
+            raise ValueError(
+                "branch_sampling must be one of "
+                f"{sorted(valid_sampling)}, got {self.branch_sampling!r}.")
+        if (isinstance(self.branch_temperature, bool)
+                or not isinstance(self.branch_temperature, Real)
+                or not math.isfinite(float(self.branch_temperature))
+                or self.branch_temperature <= 0.0):
+            raise ValueError(
+                "branch_temperature must be a finite positive number, got "
+                f"{self.branch_temperature!r}.")
 
     def resolved_branch_trigger_mode(self) -> str:
         """Resolve an explicit trigger mode while preserving old configs."""

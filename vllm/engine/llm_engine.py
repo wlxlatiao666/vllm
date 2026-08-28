@@ -1601,9 +1601,10 @@ class LLMEngine:
                     top_k = min(num_branches, row_logprobs.shape[-1])
                     if top_k == 0:
                         continue
-                    _, top_ids = torch.topk(row_logprobs, top_k, dim=-1)
+                    top_ids = self._select_tree_branch_token_ids(
+                        row_logprobs, top_k, tsp)
                     branch_token_ids = self._sanitize_tree_branch_token_ids(
-                        top_ids.tolist(),
+                        top_ids,
                         current_group.assembled_seq_group.lora_request,
                     )
                     branch_token_ids = self._cap_tree_branch_token_ids(
@@ -1622,9 +1623,10 @@ class LLMEngine:
                     top_k = min(num_branches, row_logprobs.shape[-1])
                     if top_k == 0:
                         continue
-                    _, new_token_ids = torch.topk(row_logprobs, top_k, dim=-1)
+                    new_token_ids = self._select_tree_branch_token_ids(
+                        row_logprobs, top_k, tsp)
                     branch_token_ids = self._sanitize_tree_branch_token_ids(
-                        new_token_ids.tolist(),
+                        new_token_ids,
                         current_group.assembled_seq_group.lora_request,
                     )
                     branch_token_ids = self._cap_tree_branch_token_ids(
@@ -1649,6 +1651,47 @@ class LLMEngine:
             return []
         capped = token_ids[:max_children]
         return capped if len(capped) >= 2 else []
+
+    @staticmethod
+    def _select_tree_branch_token_ids(row_logprobs, k, tree_params):
+        """Choose up to ``k`` DISTINCT branch-continuation token ids (B2).
+
+        ``branch_sampling="sample"`` (default): sample without replacement from
+        ``softmax(row_logprobs / branch_temperature)`` using the Gumbel-top-k
+        trick. This produces diverse, on-policy siblings — the sibling contrast
+        that segment-level advantage relies on — instead of the near-duplicate
+        continuations that deterministic top-k yields at a genuine (high
+        entropy) branch point.
+
+        ``branch_sampling="topk"``: legacy deterministic argmax top-k, kept for
+        ablation.
+
+        Returns a python list of token ids (length <= k).
+        """
+        k = min(int(k), row_logprobs.shape[-1])
+        if k <= 0:
+            return []
+        mode = getattr(tree_params, "branch_sampling", "sample")
+        if mode == "topk":
+            _, ids = torch.topk(row_logprobs, k, dim=-1)
+            return ids.tolist()
+
+        logits = row_logprobs.float()
+        finite = torch.isfinite(logits)
+        n_finite = int(finite.sum().item())
+        if n_finite == 0:
+            return []
+        temp = getattr(tree_params, "branch_temperature", 1.0) or 1.0
+        logits = logits / float(temp)
+        # Gumbel-top-k: adding i.i.d. Gumbel noise and taking the top-k is
+        # exactly sampling k items WITHOUT replacement from softmax(logits).
+        u = torch.rand_like(logits).clamp_(1e-20, 1.0)
+        gumbel = -torch.log(-torch.log(u))
+        perturbed = torch.where(finite, logits + gumbel,
+                                torch.full_like(logits, float("-inf")))
+        kk = min(k, n_finite)
+        _, ids = torch.topk(perturbed, kk, dim=-1)
+        return ids.tolist()
 
     @staticmethod
     def _tree_random_path_hash(seq) -> int:

@@ -1597,7 +1597,9 @@ class LLMEngine:
                 entropy = self._calculate_entropy(row_logprobs)
                 if (entropy > tsp.entropy_threshold
                     and seq.tree_depth < tsp.max_tree_depth
-                    and seq.get_output_len() >= tsp.min_seg_length):
+                    and seq.get_output_len() >= tsp.min_seg_length
+                    and (not tsp.branch_at_step_start
+                         or self._is_tree_step_start(seq))):
                     top_k = min(num_branches, row_logprobs.shape[-1])
                     if top_k == 0:
                         continue
@@ -1744,6 +1746,8 @@ class LLMEngine:
         min_seg_length = tree_params.min_seg_length
         if seq.get_output_len() < min_seg_length:
             return False
+        if tree_params.branch_at_step_start and not self._is_tree_step_start(seq):
+            return False
 
         branch_trigger_mode = tree_params.resolved_branch_trigger_mode()
         if branch_trigger_mode == "random":
@@ -1771,6 +1775,49 @@ class LLMEngine:
         # Calculate entropy
         entropy = -torch.sum(probs * finite_logprobs, dim=-1)
         return entropy.item()
+
+    def _get_tree_step_boundary_token_ids(self) -> set:
+        """Token ids that END a reasoning step (branch may open right after).
+
+        A token is a step boundary if its vocab piece contains a newline
+        (raw "\\n" or the byte-level BPE marker "Ċ") or ends with
+        sentence-final punctuation. Built lazily from the base tokenizer's
+        vocab once per engine and cached.
+        """
+        cached = getattr(self, "_tree_step_boundary_ids", None)
+        if cached is not None:
+            return cached
+        boundary: set = set()
+        sentence_end = ('.', '!', '?', '。', '！', '？')
+        try:
+            tokenizer = self.get_tokenizer()
+            for tok, tid in tokenizer.get_vocab().items():
+                if 'Ċ' in tok or '\n' in tok:
+                    boundary.add(tid)
+                elif tok and tok[-1] in sentence_end:
+                    boundary.add(tid)
+        except Exception:
+            # Tokenizer unavailable (should not happen in practice): treat
+            # every position as a step start rather than silently disabling
+            # branching altogether.
+            boundary = None
+        self._tree_step_boundary_ids = boundary
+        return boundary
+
+    def _is_tree_step_start(self, seq) -> bool:
+        """True if the current position starts a reasoning step.
+
+        The branch token competes with the just-sampled token at position
+        len-1, so the position's preceding token is token_ids[-2]; the
+        position is a step start when that token ends a step.
+        """
+        boundary = self._get_tree_step_boundary_token_ids()
+        if boundary is None:
+            return True
+        token_ids = seq.get_token_ids()
+        if len(token_ids) < 2:
+            return False
+        return token_ids[-2] in boundary
 
     def _process_threshold_stats(self, outputs, seq_group_metadata_list):
         """Per-token entropy and importance collection for collect_threshold_stats mode.
@@ -1835,6 +1882,13 @@ class LLMEngine:
                     continue
 
             if seq.is_finished():
+                continue
+
+            # Step-start-only calibration: skip non-step-start positions so
+            # the percentile threshold is computed over the same distribution
+            # that branch_at_step_start gating will actually see.
+            if (getattr(sampling_params, 'threshold_stats_step_start_only',
+                        False) and not self._is_tree_step_start(seq)):
                 continue
 
             entropy = self._calculate_entropy(logprobs[lp_idx])

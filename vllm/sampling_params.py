@@ -145,6 +145,12 @@ class TreeSearchParams:
     # 1.0 samples exactly from the model's next-token distribution; >1.0
     # increases sibling diversity. Only used when branch_sampling="sample".
     branch_temperature: float = 1.0
+    # Step-start gating: only allow branching at reasoning-step starts, i.e.
+    # positions whose PREVIOUS token is a step boundary (newline or
+    # sentence-final punctuation). Wording-level high-entropy points inside a
+    # step are skipped, so branches land on genuine decision points where
+    # sibling continuations semantically diverge.
+    branch_at_step_start: bool = False
 
     def __post_init__(self) -> None:
         valid_modes = {"random", "entropy", "entropy_waad"}
@@ -335,6 +341,12 @@ class SamplingParams(
     # Collect per-token entropy and importance (waad) stats without branching.
     # Used to calibrate entropy_threshold and tau_importance for tree decoding.
     collect_threshold_stats: bool = False
+
+    # When collecting threshold stats, only record entropy/importance at
+    # step-start positions (previous token is a step boundary). Set this when
+    # tree decoding runs with branch_at_step_start=True so the calibrated
+    # percentile threshold matches the distribution actually gated on.
+    threshold_stats_step_start_only: bool = False
 
     @staticmethod
     def from_optional(
